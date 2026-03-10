@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (glibc)
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: false
+            binary_suffix: ""
+
+          # Linux x86_64 (musl — fully static)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+            binary_suffix: ""
+
+          # Linux aarch64 (cross-compiled)
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+            binary_suffix: ""
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            use_cross: false
+            binary_suffix: ""
+
+          # macOS Apple Silicon
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+            binary_suffix: ""
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+            binary_suffix: ".exe"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build server (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }} -p rustunnel-server
+
+      - name: Build client (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }} -p rustunnel-client
+
+      - name: Build server (cargo)
+        if: "!matrix.use_cross"
+        run: cargo build --release --target ${{ matrix.target }} -p rustunnel-server
+
+      - name: Build client (cargo)
+        if: "!matrix.use_cross"
+        run: cargo build --release --target ${{ matrix.target }} -p rustunnel-client
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TARGET="${{ matrix.target }}"
+          SUFFIX="${{ matrix.binary_suffix }}"
+
+          SERVER_BIN="rustunnel-server${SUFFIX}"
+          CLIENT_BIN="rustunnel${SUFFIX}"
+          ARCHIVE="rustunnel-${TAG}-${TARGET}.tar.gz"
+
+          mkdir -p dist
+
+          cp "target/${TARGET}/release/${SERVER_BIN}" dist/
+          cp "target/${TARGET}/release/${CLIENT_BIN}" dist/
+
+          cd dist
+          if [[ "${SUFFIX}" == ".exe" ]]; then
+            7z a "../${ARCHIVE%.tar.gz}.zip" "${SERVER_BIN}" "${CLIENT_BIN}"
+            echo "ASSET=${ARCHIVE%.tar.gz}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "../${ARCHIVE}" "${SERVER_BIN}" "${CLIENT_BIN}"
+            echo "ASSET=${ARCHIVE}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compute SHA256
+        shell: bash
+        run: |
+          if [[ -f "${ASSET}" ]]; then
+            sha256sum "${ASSET}" > "${ASSET}.sha256" 2>/dev/null \
+              || shasum -a 256 "${ASSET}" > "${ASSET}.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          retention-days: 1
+
+  publish:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: release-*
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh artifacts/
+
+      - name: Combine checksums
+        run: |
+          cat artifacts/*.sha256 > artifacts/SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "rustunnel ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            artifacts/*
