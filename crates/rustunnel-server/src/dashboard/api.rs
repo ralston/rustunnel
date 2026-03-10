@@ -69,7 +69,10 @@ pub fn router(state: ApiState) -> Router {
 
 /// Validate `Authorization: Bearer <token>` against the DB token table.
 /// Also accepts the admin token directly.
-async fn require_auth(headers: &HeaderMap, state: &ApiState) -> Result<(), (StatusCode, Json<ErrBody>)> {
+async fn require_auth(
+    headers: &HeaderMap,
+    state: &ApiState,
+) -> Result<(), (StatusCode, Json<ErrBody>)> {
     let auth = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -105,14 +108,18 @@ struct ErrBody {
 fn unauthorized(msg: &str) -> (StatusCode, Json<ErrBody>) {
     (
         StatusCode::UNAUTHORIZED,
-        Json(ErrBody { error: msg.to_string() }),
+        Json(ErrBody {
+            error: msg.to_string(),
+        }),
     )
 }
 
 fn not_found(msg: &str) -> (StatusCode, Json<ErrBody>) {
     (
         StatusCode::NOT_FOUND,
-        Json(ErrBody { error: msg.to_string() }),
+        Json(ErrBody {
+            error: msg.to_string(),
+        }),
     )
 }
 
@@ -143,10 +150,7 @@ struct TunnelSummary {
     public_url: String,
 }
 
-async fn list_tunnels(
-    headers: HeaderMap,
-    State(state): State<ApiState>,
-) -> impl IntoResponse {
+async fn list_tunnels(headers: HeaderMap, State(state): State<ApiState>) -> impl IntoResponse {
     if let Err(e) = require_auth(&headers, &state).await {
         return e.into_response();
     }
@@ -224,7 +228,9 @@ struct RequestsQuery {
     limit: i64,
 }
 
-fn default_limit() -> i64 { 50 }
+fn default_limit() -> i64 {
+    50
+}
 
 async fn tunnel_requests(
     headers: HeaderMap,
@@ -252,7 +258,9 @@ async fn tunnel_requests(
             warn!("DB query failed: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrBody { error: e.to_string() }),
+                Json(ErrBody {
+                    error: e.to_string(),
+                }),
             )
                 .into_response()
         }
@@ -279,7 +287,9 @@ async fn replay_request(
             warn!("replay DB query failed: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrBody { error: e.to_string() }),
+                Json(ErrBody {
+                    error: e.to_string(),
+                }),
             )
                 .into_response()
         }
@@ -301,10 +311,7 @@ struct CreateTokenResponse {
     token: String,
 }
 
-async fn list_tokens(
-    headers: HeaderMap,
-    State(state): State<ApiState>,
-) -> impl IntoResponse {
+async fn list_tokens(headers: HeaderMap, State(state): State<ApiState>) -> impl IntoResponse {
     if let Err(e) = require_auth(&headers, &state).await {
         return e.into_response();
     }
@@ -313,7 +320,9 @@ async fn list_tokens(
         Ok(tokens) => Json(tokens).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrBody { error: e.to_string() }),
+            Json(ErrBody {
+                error: e.to_string(),
+            }),
         )
             .into_response(),
     }
@@ -340,7 +349,9 @@ async fn create_token(
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrBody { error: e.to_string() }),
+            Json(ErrBody {
+                error: e.to_string(),
+            }),
         )
             .into_response(),
     }
@@ -360,7 +371,9 @@ async fn delete_token(
         Ok(false) => not_found("token not found").into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrBody { error: e.to_string() }),
+            Json(ErrBody {
+                error: e.to_string(),
+            }),
         )
             .into_response(),
     }

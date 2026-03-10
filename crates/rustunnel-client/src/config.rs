@@ -47,12 +47,7 @@ fn default_local_host() -> String {
 
 impl TunnelDef {
     /// Build a `TunnelDef` from inline CLI arguments.
-    pub fn from_cli(
-        proto: &str,
-        port: u16,
-        local_host: &str,
-        subdomain: Option<String>,
-    ) -> Self {
+    pub fn from_cli(proto: &str, port: u16, local_host: &str, subdomain: Option<String>) -> Self {
         Self {
             proto: proto.to_string(),
             local_port: port,
@@ -84,17 +79,12 @@ impl ClientConfig {
                 path.as_ref().display()
             ))
         })?;
-        serde_yaml::from_str(&raw)
-            .map_err(|e| Error::Config(format!("invalid config YAML: {e}")))
+        serde_yaml::from_str(&raw).map_err(|e| Error::Config(format!("invalid config YAML: {e}")))
     }
 
     /// Apply CLI overrides: if `server` / `auth_token` are provided they
     /// replace the config-file values.
-    pub fn apply_overrides(
-        &mut self,
-        server: Option<String>,
-        auth_token: Option<String>,
-    ) {
+    pub fn apply_overrides(&mut self, server: Option<String>, auth_token: Option<String>) {
         if let Some(s) = server {
             self.server = s;
         }
@@ -115,7 +105,7 @@ impl ClientConfig {
 }
 
 fn default_config_path() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| Error::Config("cannot determine home directory".into()))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| Error::Config("cannot determine home directory".into()))?;
     Ok(home.join(".rustunnel").join("config.yml"))
 }

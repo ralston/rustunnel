@@ -9,10 +9,10 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use futures_util::future::poll_fn;
 use futures_util::io::{AsyncRead, AsyncWrite};
 use futures_util::sink::Sink;
 use futures_util::stream::Stream;
-use futures_util::future::poll_fn;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -153,7 +153,10 @@ impl MuxSession {
     pub fn start_detached() -> Self {
         let (server_side, client_side) = tokio::io::duplex(64 * 1024);
         let conn = Connection::new(server_side.compat(), yamux::Config::default(), Mode::Server);
-        Self { conn, _peer: client_side }
+        Self {
+            conn,
+            _peer: client_side,
+        }
     }
 
     /// Poll for the next inbound stream from the remote peer.
@@ -173,10 +176,7 @@ impl MuxSession {
 ///
 /// The caller writes a `DataStreamOpen` control frame so the client can
 /// correlate the stream with the pending proxy connection.
-pub async fn open_data_stream(
-    mux:     &mut MuxSession,
-    conn_id: Uuid,
-) -> Result<YamuxStream> {
+pub async fn open_data_stream(mux: &mut MuxSession, conn_id: Uuid) -> Result<YamuxStream> {
     tracing::debug!(%conn_id, "opening yamux data stream");
     mux.open_stream()
         .await

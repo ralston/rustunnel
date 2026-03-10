@@ -44,9 +44,7 @@ pub async fn run_dashboard(
         admin_token,
     };
 
-    let app = Router::new()
-        .merge(api::router(state))
-        .merge(ui::router());
+    let app = Router::new().merge(api::router(state)).merge(ui::router());
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "dashboard listening");

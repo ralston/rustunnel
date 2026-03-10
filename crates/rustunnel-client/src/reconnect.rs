@@ -16,9 +16,9 @@ use crate::config::{ClientConfig, TunnelDef};
 use crate::control;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(1);
-const MAX_DELAY:     Duration = Duration::from_secs(60);
-const MULTIPLIER:    f64      = 2.0;
-const JITTER:        f64      = 0.20; // ±20 %
+const MAX_DELAY: Duration = Duration::from_secs(60);
+const MULTIPLIER: f64 = 2.0;
+const JITTER: f64 = 0.20; // ±20 %
 
 /// Run `connect` with exponential-backoff retry on failure.
 ///
@@ -65,7 +65,7 @@ pub async fn run_with_reconnect(config: ClientConfig, tunnels: Vec<TunnelDef>) {
 fn next_delay(current: Duration) -> Duration {
     let mut rng = rand::thread_rng();
     let jitter_factor = 1.0 + rng.gen_range(-JITTER..=JITTER);
-    let next_secs = (current.as_secs_f64() * MULTIPLIER * jitter_factor)
-        .min(MAX_DELAY.as_secs_f64());
+    let next_secs =
+        (current.as_secs_f64() * MULTIPLIER * jitter_factor).min(MAX_DELAY.as_secs_f64());
     Duration::from_secs_f64(next_secs)
 }

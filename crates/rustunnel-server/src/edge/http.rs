@@ -48,7 +48,7 @@ use crate::edge::capture::{CaptureEvent, CaptureTx};
 // ── timeouts ──────────────────────────────────────────────────────────────────
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
-const PROXY_TIMEOUT:  Duration = Duration::from_secs(60);
+const PROXY_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ── body type ─────────────────────────────────────────────────────────────────
 
@@ -66,23 +66,27 @@ fn empty() -> BoxBody {
 
 #[derive(Clone)]
 struct ProxyCtx {
-    core:       Arc<TunnelCore>,
+    core: Arc<TunnelCore>,
     capture_tx: Option<CaptureTx>,
-    domain:     String,
+    domain: String,
 }
 
 // ── public entry point ────────────────────────────────────────────────────────
 
 /// Start the HTTP (redirect) and HTTPS (proxy) edge listeners concurrently.
 pub async fn run_http_edge(
-    http_addr:  SocketAddr,
+    http_addr: SocketAddr,
     https_addr: SocketAddr,
     tls_config: Arc<rustls::ServerConfig>,
-    core:       Arc<TunnelCore>,
-    domain:     String,
+    core: Arc<TunnelCore>,
+    domain: String,
     capture_tx: Option<CaptureTx>,
 ) -> crate::error::Result<()> {
-    let ctx = ProxyCtx { core, capture_tx, domain };
+    let ctx = ProxyCtx {
+        core,
+        capture_tx,
+        domain,
+    };
 
     tokio::select! {
         r = run_http_redirect(http_addr, ctx.domain.clone()) => r,
@@ -92,27 +96,28 @@ pub async fn run_http_edge(
 
 // ── HTTP redirect (port 80) ───────────────────────────────────────────────────
 
-async fn run_http_redirect(
-    addr:   SocketAddr,
-    domain: String,
-) -> crate::error::Result<()> {
+async fn run_http_redirect(addr: SocketAddr, domain: String) -> crate::error::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "HTTP redirect listener ready");
 
     loop {
         let (tcp, peer) = match listener.accept().await {
-            Ok(p)  => p,
-            Err(e) => { warn!("accept error: {e}"); continue; }
+            Ok(p) => p,
+            Err(e) => {
+                warn!("accept error: {e}");
+                continue;
+            }
         };
         let domain = domain.clone();
         tokio::spawn(async move {
-            let io  = TokioIo::new(tcp);
+            let io = TokioIo::new(tcp);
             let svc = service_fn(move |req: Request<Incoming>| {
                 let domain = domain.clone();
                 async move { Ok::<_, Infallible>(redirect_to_https(req, &domain)) }
             });
             if let Err(e) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(io, svc).await
+                .serve_connection(io, svc)
+                .await
             {
                 debug!(%peer, "HTTP redirect error: {e}");
             }
@@ -121,10 +126,16 @@ async fn run_http_redirect(
 }
 
 fn redirect_to_https(req: Request<Incoming>, domain: &str) -> Response<BoxBody> {
-    let host = req.headers()
-        .get(HOST).and_then(|v| v.to_str().ok())
+    let host = req
+        .headers()
+        .get(HOST)
+        .and_then(|v| v.to_str().ok())
         .unwrap_or(domain);
-    let pq = req.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let pq = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
     let location = format!("https://{host}{pq}");
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
@@ -136,9 +147,9 @@ fn redirect_to_https(req: Request<Incoming>, domain: &str) -> Response<BoxBody> 
 // ── HTTPS proxy (port 443) ────────────────────────────────────────────────────
 
 async fn run_https_proxy(
-    addr:       SocketAddr,
+    addr: SocketAddr,
     tls_config: Arc<rustls::ServerConfig>,
-    ctx:        ProxyCtx,
+    ctx: ProxyCtx,
 ) -> crate::error::Result<()> {
     let acceptor = TlsAcceptor::from(tls_config);
     let listener = TcpListener::bind(addr).await?;
@@ -146,18 +157,24 @@ async fn run_https_proxy(
 
     loop {
         let (tcp, peer) = match listener.accept().await {
-            Ok(p)  => p,
-            Err(e) => { warn!("accept error: {e}"); continue; }
+            Ok(p) => p,
+            Err(e) => {
+                warn!("accept error: {e}");
+                continue;
+            }
         };
         let acceptor = acceptor.clone();
-        let ctx      = ctx.clone();
+        let ctx = ctx.clone();
 
         tokio::spawn(async move {
             let tls = match acceptor.accept(tcp).await {
-                Ok(s)  => s,
-                Err(e) => { debug!(%peer, "TLS failed: {e}"); return; }
+                Ok(s) => s,
+                Err(e) => {
+                    debug!(%peer, "TLS failed: {e}");
+                    return;
+                }
             };
-            let io  = TokioIo::new(tls);
+            let io = TokioIo::new(tls);
             let svc = service_fn(move |req: Request<Incoming>| {
                 let ctx = ctx.clone();
                 async move { Ok::<_, Infallible>(proxy_request(req, peer, ctx).await) }
@@ -176,20 +193,20 @@ async fn run_https_proxy(
 // ── core proxy logic ──────────────────────────────────────────────────────────
 
 async fn proxy_request(
-    req:  Request<Incoming>,
+    req: Request<Incoming>,
     peer: SocketAddr,
-    ctx:  ProxyCtx,
+    ctx: ProxyCtx,
 ) -> Response<BoxBody> {
     let start = Instant::now();
 
     // ── 1. Extract subdomain ──────────────────────────────────────────────
     let host = match req.headers().get(HOST).and_then(|v| v.to_str().ok()) {
         Some(h) => h.to_owned(),
-        None    => return err_response(StatusCode::BAD_REQUEST, "Missing Host header"),
+        None => return err_response(StatusCode::BAD_REQUEST, "Missing Host header"),
     };
     let subdomain = match extract_subdomain(&host, &ctx.domain) {
         Some(s) => s,
-        None    => return err_response(StatusCode::BAD_REQUEST, "Cannot parse subdomain"),
+        None => return err_response(StatusCode::BAD_REQUEST, "Cannot parse subdomain"),
     };
 
     // ── 2. Resolve tunnel ─────────────────────────────────────────────────
@@ -201,11 +218,14 @@ async fn proxy_request(
         }
     };
 
-    let conn_id  = Uuid::new_v4();
-    let method   = req.method().to_string();
-    let path     = req.uri().path_and_query()
-        .map(|pq| pq.to_string()).unwrap_or_else(|| "/".into());
-    let is_ws    = is_websocket_upgrade(&req);
+    let conn_id = Uuid::new_v4();
+    let method = req.method().to_string();
+    let path = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.to_string())
+        .unwrap_or_else(|| "/".into());
+    let is_ws = is_websocket_upgrade(&req);
 
     info!(%conn_id, %peer, subdomain, method, path, ws = is_ws, "proxying");
 
@@ -213,11 +233,14 @@ async fn proxy_request(
     let stream_rx = ctx.core.register_pending_conn(conn_id);
 
     // ── 4. Notify session ─────────────────────────────────────────────────
-    if let Err(e) = control_tx.send(ControlMessage::NewConnection {
-        conn_id,
-        client_addr: peer,
-        protocol: TunnelProtocol::Http,
-    }).await {
+    if let Err(e) = control_tx
+        .send(ControlMessage::NewConnection {
+            conn_id,
+            client_addr: peer,
+            protocol: TunnelProtocol::Http,
+        })
+        .await
+    {
         warn!(%conn_id, "control send failed: {e}");
         ctx.core.cancel_pending_conn(&conn_id);
         return err_response(StatusCode::BAD_GATEWAY, "Tunnel session unavailable");
@@ -225,7 +248,7 @@ async fn proxy_request(
 
     // ── 5. Wait for yamux data stream ─────────────────────────────────────
     let yamux_stream = match timeout(STREAM_TIMEOUT, stream_rx).await {
-        Ok(Ok(s))  => s,
+        Ok(Ok(s)) => s,
         Ok(Err(_)) => {
             warn!(%conn_id, "pending-conn sender dropped");
             return err_response(StatusCode::BAD_GATEWAY, "Tunnel did not open a data stream");
@@ -246,7 +269,7 @@ async fn proxy_request(
     let request_bytes = req.body().size_hint().upper().unwrap_or(0);
 
     let resp = match timeout(PROXY_TIMEOUT, forward_http(req, yamux_stream)).await {
-        Ok(Ok(r))  => r,
+        Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             warn!(%conn_id, "proxy error: {e}");
             return err_response(StatusCode::BAD_GATEWAY, "Proxy error");
@@ -257,24 +280,27 @@ async fn proxy_request(
         }
     };
 
-    let status         = resp.status().as_u16();
+    let status = resp.status().as_u16();
     let response_bytes = resp.body().size_hint().upper().unwrap_or(0);
-    let duration_ms    = start.elapsed().as_millis() as u64;
+    let duration_ms = start.elapsed().as_millis() as u64;
 
     info!(%conn_id, subdomain, status, duration_ms, "request complete");
 
-    emit_capture(&ctx.capture_tx, CaptureEvent {
-        conn_id,
-        tunnel_id:    tunnel_info.tunnel_id,
-        tunnel_label: subdomain,
-        method,
-        path,
-        status,
-        request_bytes,
-        response_bytes,
-        duration_ms,
-        captured_at: SystemTime::now(),
-    });
+    emit_capture(
+        &ctx.capture_tx,
+        CaptureEvent {
+            conn_id,
+            tunnel_id: tunnel_info.tunnel_id,
+            tunnel_label: subdomain,
+            method,
+            path,
+            status,
+            request_bytes,
+            response_bytes,
+            duration_ms,
+            captured_at: SystemTime::now(),
+        },
+    );
 
     resp
 }
@@ -282,7 +308,7 @@ async fn proxy_request(
 // ── HTTP forwarding via hyper client ─────────────────────────────────────────
 
 async fn forward_http(
-    req:          Request<Incoming>,
+    req: Request<Incoming>,
     yamux_stream: YamuxStream,
 ) -> Result<Response<BoxBody>, Box<dyn std::error::Error + Send + Sync>> {
     // Bridge yamux (futures::io) → tokio::io → hyper::rt IO.
@@ -316,11 +342,11 @@ async fn forward_http(
 // ── WebSocket upgrade ─────────────────────────────────────────────────────────
 
 async fn handle_ws_upgrade(
-    mut req:      Request<Incoming>,
+    mut req: Request<Incoming>,
     yamux_stream: YamuxStream,
-    conn_id:      Uuid,
-    ctx:          &ProxyCtx,
-    start:        Instant,
+    conn_id: Uuid,
+    ctx: &ProxyCtx,
+    start: Instant,
 ) -> Response<BoxBody> {
     debug!(%conn_id, "WebSocket upgrade");
 
@@ -336,28 +362,31 @@ async fn handle_ws_upgrade(
                 let mut upstream = yamux_stream.compat();
                 match tokio::io::copy_bidirectional(&mut client_io, &mut upstream).await {
                     Ok((up, dn)) => debug!(%conn_id, bytes_up=up, bytes_dn=dn, "WS done"),
-                    Err(e)       => debug!(%conn_id, "WS copy: {e}"),
+                    Err(e) => debug!(%conn_id, "WS copy: {e}"),
                 }
             }
         }
     });
 
-    emit_capture(&ctx.capture_tx, CaptureEvent {
-        conn_id,
-        tunnel_id:    Uuid::nil(),
-        tunnel_label: String::new(),
-        method:       "WS-UPGRADE".into(),
-        path:         String::new(),
-        status:       101,
-        request_bytes:  0,
-        response_bytes: 0,
-        duration_ms:  start.elapsed().as_millis() as u64,
-        captured_at:  SystemTime::now(),
-    });
+    emit_capture(
+        &ctx.capture_tx,
+        CaptureEvent {
+            conn_id,
+            tunnel_id: Uuid::nil(),
+            tunnel_label: String::new(),
+            method: "WS-UPGRADE".into(),
+            path: String::new(),
+            status: 101,
+            request_bytes: 0,
+            response_bytes: 0,
+            duration_ms: start.elapsed().as_millis() as u64,
+            captured_at: SystemTime::now(),
+        },
+    );
 
     Response::builder()
         .status(StatusCode::SWITCHING_PROTOCOLS)
-        .header("Upgrade",    "websocket")
+        .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")
         .body(empty())
         .unwrap()
@@ -366,9 +395,11 @@ async fn handle_ws_upgrade(
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 pub fn extract_subdomain(host: &str, domain: &str) -> Option<String> {
-    let host   = host.split(':').next().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host);
     let suffix = format!(".{domain}");
-    if host == domain { return None; }
+    if host == domain {
+        return None;
+    }
     host.strip_suffix(&suffix).map(str::to_string)
 }
 
@@ -381,8 +412,14 @@ fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
 }
 
 static HOP_BY_HOP: &[&str] = &[
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
 ];
 
 fn remove_hop_by_hop(headers: &mut hyper::HeaderMap) {
@@ -442,9 +479,15 @@ mod tests {
             Some("myapp".into())
         );
         // Bare domain → None
-        assert_eq!(extract_subdomain("tunnel.example.com", "tunnel.example.com"), None);
+        assert_eq!(
+            extract_subdomain("tunnel.example.com", "tunnel.example.com"),
+            None
+        );
         // Unrelated domain → None
-        assert_eq!(extract_subdomain("other.example.com", "tunnel.example.com"), None);
+        assert_eq!(
+            extract_subdomain("other.example.com", "tunnel.example.com"),
+            None
+        );
         // Multi-level subdomain
         assert_eq!(
             extract_subdomain("a.b.tunnel.example.com", "tunnel.example.com"),
@@ -455,13 +498,16 @@ mod tests {
     #[test]
     fn hop_by_hop_headers_stripped() {
         let mut headers = hyper::HeaderMap::new();
-        headers.insert("connection",        HeaderValue::from_static("keep-alive"));
+        headers.insert("connection", HeaderValue::from_static("keep-alive"));
         headers.insert("transfer-encoding", HeaderValue::from_static("chunked"));
-        headers.insert("x-request-id",     HeaderValue::from_static("abc"));
+        headers.insert("x-request-id", HeaderValue::from_static("abc"));
         remove_hop_by_hop(&mut headers);
         assert!(!headers.contains_key("connection"));
         assert!(!headers.contains_key("transfer-encoding"));
-        assert!(headers.contains_key("x-request-id"), "custom headers must survive");
+        assert!(
+            headers.contains_key("x-request-id"),
+            "custom headers must survive"
+        );
     }
 
     #[test]

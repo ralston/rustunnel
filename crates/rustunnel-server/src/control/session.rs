@@ -28,18 +28,18 @@ use crate::error::{Error, Result};
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
-const AUTH_TIMEOUT:      Duration = Duration::from_secs(5);
-const PING_INTERVAL:     Duration = Duration::from_secs(30);
-const PONG_DEADLINE:     Duration = Duration::from_secs(10);
-const CTRL_CHANNEL_SIZE: usize   = 64;
+const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+const PONG_DEADLINE: Duration = Duration::from_secs(10);
+const CTRL_CHANNEL_SIZE: usize = 64;
 
 // ── public entry point ────────────────────────────────────────────────────────
 
 pub async fn handle_session<S>(
-    ws:        WebSocketStream<S>,
+    ws: WebSocketStream<S>,
     peer_addr: SocketAddr,
-    core:      Arc<TunnelCore>,
-    config:    Arc<ServerConfig>,
+    core: Arc<TunnelCore>,
+    config: Arc<ServerConfig>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -52,10 +52,10 @@ pub async fn handle_session<S>(
 // ── session driver ────────────────────────────────────────────────────────────
 
 async fn run_session<S>(
-    ws:        WebSocketStream<S>,
+    ws: WebSocketStream<S>,
     peer_addr: SocketAddr,
-    core:      &Arc<TunnelCore>,
-    config:    &Arc<ServerConfig>,
+    core: &Arc<TunnelCore>,
+    config: &Arc<ServerConfig>,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -64,17 +64,21 @@ where
     let (ctrl_tx, mut ctrl_rx) = mpsc::channel::<ControlMessage>(CTRL_CHANNEL_SIZE);
 
     // Auth.
-    let (mut ws, session_id) =
-        auth_handshake(ws, peer_addr, core, config, ctrl_tx).await?;
+    let (mut ws, session_id) = auth_handshake(ws, peer_addr, core, config, ctrl_tx).await?;
 
     tracing::info!(%peer_addr, %session_id, "session authenticated");
 
     // Heartbeat channels.
     let (ping_out_tx, mut ping_out_rx) = mpsc::channel::<u64>(4);
-    let (pong_in_tx, pong_in_rx)       = mpsc::channel::<u64>(4);
-    let (hb_stop_tx, hb_stop_rx)       = oneshot::channel::<()>();
+    let (pong_in_tx, pong_in_rx) = mpsc::channel::<u64>(4);
+    let (hb_stop_tx, hb_stop_rx) = oneshot::channel::<()>();
 
-    tokio::spawn(heartbeat_task(ping_out_tx, pong_in_rx, hb_stop_rx, session_id));
+    tokio::spawn(heartbeat_task(
+        ping_out_tx,
+        pong_in_rx,
+        hb_stop_rx,
+        session_id,
+    ));
 
     let mut mux = MuxSession::start_detached();
 
@@ -86,8 +90,9 @@ where
         session_id,
         core,
         config,
-        &mut mux,  // passed into handle_client_message for DataStreamOpen
-    ).await;
+        &mut mux, // passed into handle_client_message for DataStreamOpen
+    )
+    .await;
 
     let _ = hb_stop_tx.send(());
     core.remove_session(&session_id);
@@ -99,11 +104,11 @@ where
 // ── auth handshake ────────────────────────────────────────────────────────────
 
 async fn auth_handshake<S>(
-    mut ws:    WebSocketStream<S>,
+    mut ws: WebSocketStream<S>,
     peer_addr: SocketAddr,
-    core:      &Arc<TunnelCore>,
-    config:    &Arc<ServerConfig>,
-    ctrl_tx:   mpsc::Sender<ControlMessage>,
+    core: &Arc<TunnelCore>,
+    config: &Arc<ServerConfig>,
+    ctrl_tx: mpsc::Sender<ControlMessage>,
 ) -> Result<(WebSocketStream<S>, Uuid)>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -117,29 +122,44 @@ where
     let frame = parse_binary(raw)?;
 
     let (token, _client_version) = match frame {
-        ControlFrame::Auth { token, client_version } => (token, client_version),
+        ControlFrame::Auth {
+            token,
+            client_version,
+        } => (token, client_version),
         other => {
-            let _ = send_frame(&mut ws, &ControlFrame::AuthError {
-                message: "expected Auth frame".into(),
-            }).await;
+            let _ = send_frame(
+                &mut ws,
+                &ControlFrame::AuthError {
+                    message: "expected Auth frame".into(),
+                },
+            )
+            .await;
             return Err(Error::Auth(format!("unexpected frame: {other:?}")));
         }
     };
 
     let authed = !config.auth.require_auth || token == config.auth.admin_token;
     if !authed {
-        let _ = send_frame(&mut ws, &ControlFrame::AuthError {
-            message: "invalid token".into(),
-        }).await;
+        let _ = send_frame(
+            &mut ws,
+            &ControlFrame::AuthError {
+                message: "invalid token".into(),
+            },
+        )
+        .await;
         return Err(Error::Auth("invalid token".into()));
     }
 
     let session_id = core.register_session(peer_addr, token, ctrl_tx);
 
-    send_frame(&mut ws, &ControlFrame::AuthOk {
-        session_id,
-        server_version: env!("CARGO_PKG_VERSION").to_string(),
-    }).await?;
+    send_frame(
+        &mut ws,
+        &ControlFrame::AuthOk {
+            session_id,
+            server_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    )
+    .await?;
 
     Ok((ws, session_id))
 }
@@ -147,14 +167,14 @@ where
 // ── main loop ─────────────────────────────────────────────────────────────────
 
 async fn main_loop<S>(
-    ws:          &mut WebSocketStream<S>,
-    ctrl_rx:     &mut mpsc::Receiver<ControlMessage>,
+    ws: &mut WebSocketStream<S>,
+    ctrl_rx: &mut mpsc::Receiver<ControlMessage>,
     ping_out_rx: &mut mpsc::Receiver<u64>,
-    pong_in_tx:  mpsc::Sender<u64>,
-    session_id:  Uuid,
-    core:        &Arc<TunnelCore>,
-    config:      &Arc<ServerConfig>,
-    mux:         &mut MuxSession,
+    pong_in_tx: mpsc::Sender<u64>,
+    session_id: Uuid,
+    core: &Arc<TunnelCore>,
+    config: &Arc<ServerConfig>,
+    mux: &mut MuxSession,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -215,13 +235,13 @@ where
 // ── frame dispatch ────────────────────────────────────────────────────────────
 
 async fn handle_client_message<S>(
-    msg:        Message,
-    ws:         &mut WebSocketStream<S>,
+    msg: Message,
+    ws: &mut WebSocketStream<S>,
     session_id: Uuid,
-    core:       &Arc<TunnelCore>,
-    config:     &Arc<ServerConfig>,
+    core: &Arc<TunnelCore>,
+    config: &Arc<ServerConfig>,
     pong_in_tx: &mpsc::Sender<u64>,
-    mux:        &mut MuxSession,
+    mux: &mut MuxSession,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -232,40 +252,71 @@ where
     };
 
     match frame {
-        ControlFrame::RegisterTunnel { request_id, protocol, subdomain, local_addr: _ } => {
+        ControlFrame::RegisterTunnel {
+            request_id,
+            protocol,
+            subdomain,
+            local_addr: _,
+        } => {
             tracing::debug!(%session_id, %request_id, ?protocol, "register tunnel");
             match &protocol {
                 TunnelProtocol::Http | TunnelProtocol::Https => {
                     match core.register_http_tunnel(&session_id, subdomain, protocol.clone()) {
                         Ok((tunnel_id, sub)) => {
-                            let scheme = if protocol == TunnelProtocol::Https { "https" } else { "http" };
+                            let scheme = if protocol == TunnelProtocol::Https {
+                                "https"
+                            } else {
+                                "http"
+                            };
                             let public_url = format!("{scheme}://{}.{}", sub, config.server.domain);
-                            send_frame(ws, &ControlFrame::TunnelRegistered {
-                                request_id, tunnel_id, public_url, assigned_port: None,
-                            }).await?;
+                            send_frame(
+                                ws,
+                                &ControlFrame::TunnelRegistered {
+                                    request_id,
+                                    tunnel_id,
+                                    public_url,
+                                    assigned_port: None,
+                                },
+                            )
+                            .await?;
                         }
                         Err(e) => {
-                            send_frame(ws, &ControlFrame::TunnelError {
-                                request_id, message: e.to_string(),
-                            }).await?;
+                            send_frame(
+                                ws,
+                                &ControlFrame::TunnelError {
+                                    request_id,
+                                    message: e.to_string(),
+                                },
+                            )
+                            .await?;
                         }
                     }
                 }
-                TunnelProtocol::Tcp => {
-                    match core.register_tcp_tunnel(&session_id) {
-                        Ok((tunnel_id, port)) => {
-                            let public_url = format!("tcp://{}:{port}", config.server.domain);
-                            send_frame(ws, &ControlFrame::TunnelRegistered {
-                                request_id, tunnel_id, public_url, assigned_port: Some(port),
-                            }).await?;
-                        }
-                        Err(e) => {
-                            send_frame(ws, &ControlFrame::TunnelError {
-                                request_id, message: e.to_string(),
-                            }).await?;
-                        }
+                TunnelProtocol::Tcp => match core.register_tcp_tunnel(&session_id) {
+                    Ok((tunnel_id, port)) => {
+                        let public_url = format!("tcp://{}:{port}", config.server.domain);
+                        send_frame(
+                            ws,
+                            &ControlFrame::TunnelRegistered {
+                                request_id,
+                                tunnel_id,
+                                public_url,
+                                assigned_port: Some(port),
+                            },
+                        )
+                        .await?;
                     }
-                }
+                    Err(e) => {
+                        send_frame(
+                            ws,
+                            &ControlFrame::TunnelError {
+                                request_id,
+                                message: e.to_string(),
+                            },
+                        )
+                        .await?;
+                    }
+                },
             }
         }
 
@@ -313,10 +364,10 @@ where
 // ── heartbeat task ────────────────────────────────────────────────────────────
 
 async fn heartbeat_task(
-    ping_out_tx:    mpsc::Sender<u64>,
+    ping_out_tx: mpsc::Sender<u64>,
     mut pong_in_rx: mpsc::Receiver<u64>,
-    mut stop:       oneshot::Receiver<()>,
-    session_id:     Uuid,
+    mut stop: oneshot::Receiver<()>,
+    session_id: Uuid,
 ) {
     let mut ticker = interval(PING_INTERVAL);
     ticker.tick().await; // skip immediate first tick
@@ -361,10 +412,12 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let bytes = encode_frame(frame);
-    ws.send(Message::Binary(bytes.into()))
-        .await
-        .map_err(|e| Error::Io(std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe, e.to_string())))
+    ws.send(Message::Binary(bytes.into())).await.map_err(|e| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            e.to_string(),
+        ))
+    })
 }
 
 fn parse_binary(msg: Message) -> Result<ControlFrame> {

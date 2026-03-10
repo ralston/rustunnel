@@ -190,7 +190,9 @@ impl TunnelCore {
         self.tcp_routes.insert(port, info);
         self.tunnel_index.insert(tunnel_id, TunnelKey::Tcp(port));
         self.add_tunnel_to_session(session_id, tunnel_id);
-        let _ = self.tcp_events.send(TcpTunnelEvent::Registered { tunnel_id, port });
+        let _ = self
+            .tcp_events
+            .send(TcpTunnelEvent::Registered { tunnel_id, port });
 
         Ok((tunnel_id, port))
     }
@@ -220,26 +222,15 @@ impl TunnelCore {
         subdomain: &str,
     ) -> Option<(TunnelInfo, mpsc::Sender<ControlMessage>)> {
         let tunnel = self.http_routes.get(subdomain)?.clone();
-        let tx = self
-            .sessions
-            .get(&tunnel.session_id)?
-            .control_tx
-            .clone();
+        let tx = self.sessions.get(&tunnel.session_id)?.control_tx.clone();
         tunnel.request_count.fetch_add(1, Ordering::Relaxed);
         Some((tunnel, tx))
     }
 
     /// Look up the tunnel and its session's control channel by TCP port.
-    pub fn resolve_tcp(
-        &self,
-        port: u16,
-    ) -> Option<(TunnelInfo, mpsc::Sender<ControlMessage>)> {
+    pub fn resolve_tcp(&self, port: u16) -> Option<(TunnelInfo, mpsc::Sender<ControlMessage>)> {
         let tunnel = self.tcp_routes.get(&port)?.clone();
-        let tx = self
-            .sessions
-            .get(&tunnel.session_id)?
-            .control_tx
-            .clone();
+        let tx = self.sessions.get(&tunnel.session_id)?.control_tx.clone();
         tunnel.request_count.fetch_add(1, Ordering::Relaxed);
         Some((tunnel, tx))
     }
@@ -332,7 +323,12 @@ mod tests {
 
         assert_eq!(subdomain, "myapp");
         assert!(core.http_routes.contains_key("myapp"));
-        assert!(core.sessions.get(&session_id).unwrap().tunnels.contains(&tunnel_id));
+        assert!(core
+            .sessions
+            .get(&session_id)
+            .unwrap()
+            .tunnels
+            .contains(&tunnel_id));
     }
 
     #[test]
@@ -388,7 +384,12 @@ mod tests {
 
         assert!(port >= 20000 && port <= 20009);
         assert!(core.tcp_routes.contains_key(&port));
-        assert!(core.sessions.get(&session_id).unwrap().tunnels.contains(&tunnel_id));
+        assert!(core
+            .sessions
+            .get(&session_id)
+            .unwrap()
+            .tunnels
+            .contains(&tunnel_id));
     }
 
     #[test]

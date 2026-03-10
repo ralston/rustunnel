@@ -71,9 +71,9 @@ async fn tcp_tunnel_works_after_server_restart() {
     // ── Phase 1: initial server ───────────────────────────────────────────────
 
     let server_v1 = TestServer::start_with(true, admin_token).await;
-    let control_port   = server_v1.control_port;
-    let http_port      = server_v1.http_port;
-    let https_port     = server_v1.https_port;
+    let control_port = server_v1.control_port;
+    let http_port = server_v1.http_port;
+    let https_port = server_v1.https_port;
     let dashboard_port = server_v1.dashboard_port;
     let tcp_port_range = server_v1.config.limits.tcp_port_range;
 
@@ -91,7 +91,9 @@ async fn tcp_tunnel_works_after_server_restart() {
     let core_v1 = Arc::clone(&server_v1.core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client_v1.wait_new_connection().await else { break };
+            let Ok(conn_id) = client_v1.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_v1, conn_id, local_addr).await;
         }
     });
@@ -140,7 +142,9 @@ async fn tcp_tunnel_works_after_server_restart() {
     let core_v2 = Arc::clone(&server_v2.core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client_v2.wait_new_connection().await else { break };
+            let Ok(conn_id) = client_v2.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_v2, conn_id, local_addr).await;
         }
     });
@@ -155,7 +159,10 @@ async fn tcp_tunnel_works_after_server_restart() {
     conn2.write_all(b"ping-v2").await.expect("write v2");
     let mut buf2 = [0u8; 7];
     conn2.read_exact(&mut buf2).await.expect("read v2");
-    assert_eq!(&buf2, b"ping-v2", "echo should work on server v2 after restart");
+    assert_eq!(
+        &buf2, b"ping-v2",
+        "echo should work on server v2 after restart"
+    );
 }
 
 // ── reconnect: old tunnel port no longer responds after restart ───────────────
@@ -169,10 +176,7 @@ async fn old_tunnel_port_closed_after_restart() {
     // Start server v1, register a TCP tunnel, record its port.
     let server_v1 = TestServer::start_with(true, admin_token).await;
     let mut client_v1 = TestClient::connect(&server_v1).await.expect("v1 auth");
-    let (_, old_port) = client_v1
-        .register_tcp_tunnel()
-        .await
-        .expect("v1 tunnel");
+    let (_, old_port) = client_v1.register_tcp_tunnel().await.expect("v1 tunnel");
 
     // Drop the server — all listeners should close.
     drop(server_v1);
@@ -180,7 +184,9 @@ async fn old_tunnel_port_closed_after_restart() {
 
     // Attempt to connect to the old port — must fail (connection refused).
     let result = tokio::net::TcpStream::connect(
-        format!("127.0.0.1:{old_port}").parse::<SocketAddr>().unwrap()
+        format!("127.0.0.1:{old_port}")
+            .parse::<SocketAddr>()
+            .unwrap(),
     )
     .await;
 
@@ -200,9 +206,9 @@ async fn new_client_auth_succeeds_after_restart() {
 
     // Start and stop server v1.
     let server_v1 = TestServer::start_with(true, admin_token).await;
-    let control_port   = server_v1.control_port;
-    let http_port      = server_v1.http_port;
-    let https_port     = server_v1.https_port;
+    let control_port = server_v1.control_port;
+    let http_port = server_v1.http_port;
+    let https_port = server_v1.https_port;
     let dashboard_port = server_v1.dashboard_port;
     let tcp_port_range = server_v1.config.limits.tcp_port_range;
     drop(server_v1);

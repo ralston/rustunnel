@@ -51,7 +51,7 @@ use crate::proxy;
 
 // ── timeouts & intervals ──────────────────────────────────────────────────────
 
-const AUTH_TIMEOUT:  Duration = Duration::from_secs(10);
+const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PONG_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -60,14 +60,18 @@ const PONG_DEADLINE: Duration = Duration::from_secs(10);
 /// Adapts a `WebSocketStream` into `futures::io::{AsyncRead, AsyncWrite}` so
 /// that yamux can operate over WebSocket binary frames.
 struct WsCompat<S> {
-    inner:    WebSocketStream<S>,
+    inner: WebSocketStream<S>,
     read_buf: Vec<u8>,
     read_pos: usize,
 }
 
 impl<S> WsCompat<S> {
     fn new(ws: WebSocketStream<S>) -> Self {
-        Self { inner: ws, read_buf: Vec::new(), read_pos: 0 }
+        Self {
+            inner: ws,
+            read_buf: Vec::new(),
+            read_pos: 0,
+        }
     }
 }
 
@@ -176,13 +180,20 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
 
     // 2. Auth ——————————————————————————————————————————————————————————————
     let token = config.auth_token.clone().unwrap_or_default();
-    send_frame(&mut ctrl_ws, &ControlFrame::Auth {
-        token,
-        client_version: env!("CARGO_PKG_VERSION").to_string(),
-    }).await?;
+    send_frame(
+        &mut ctrl_ws,
+        &ControlFrame::Auth {
+            token,
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    )
+    .await?;
 
     let session_id = match recv_frame_timeout(&mut ctrl_ws, AUTH_TIMEOUT).await? {
-        ControlFrame::AuthOk { session_id, server_version } => {
+        ControlFrame::AuthOk {
+            session_id,
+            server_version,
+        } => {
             info!(%session_id, %server_version, "authenticated");
             session_id
         }
@@ -192,7 +203,9 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
         }
         other => {
             sp.finish_and_clear();
-            return Err(Error::Connection(format!("unexpected frame during auth: {other:?}")));
+            return Err(Error::Connection(format!(
+                "unexpected frame during auth: {other:?}"
+            )));
         }
     };
 
@@ -206,12 +219,16 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
         let protocol = proto_to_enum(&tunnel.proto)?;
         let local_addr = format!("{}:{}", tunnel.local_host, tunnel.local_port);
 
-        send_frame(&mut ctrl_ws, &ControlFrame::RegisterTunnel {
-            request_id: request_id.clone(),
-            protocol,
-            subdomain: tunnel.subdomain.clone(),
-            local_addr,
-        }).await?;
+        send_frame(
+            &mut ctrl_ws,
+            &ControlFrame::RegisterTunnel {
+                request_id: request_id.clone(),
+                protocol,
+                subdomain: tunnel.subdomain.clone(),
+                local_addr,
+            },
+        )
+        .await?;
 
         match recv_frame_timeout(&mut ctrl_ws, AUTH_TIMEOUT).await? {
             ControlFrame::TunnelRegistered { public_url, .. } => {
@@ -240,17 +257,19 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
     let mut data_conn: Option<DataConn> = connect_data_ws(&config.server, session_id).await;
 
     if data_conn.is_none() {
-        warn!("data WebSocket unavailable — proxy connections will be skipped \
-               until the server implements /_data/<session_id>");
+        warn!(
+            "data WebSocket unavailable — proxy connections will be skipped \
+               until the server implements /_data/<session_id>"
+        );
     }
 
     // 5. Print startup display ————————————————————————————————————————————
     let display_tunnels: Vec<TunnelDisplay> = registered
         .iter()
         .map(|(t, url)| TunnelDisplay {
-            name:       t.subdomain.clone().unwrap_or_else(|| "tunnel".into()),
-            proto:      t.proto.clone(),
-            local:      format!("{}:{}", t.local_host, t.local_port),
+            name: t.subdomain.clone().unwrap_or_else(|| "tunnel".into()),
+            proto: t.proto.clone(),
+            local: format!("{}:{}", t.local_host, t.local_port),
             public_url: url.clone(),
         })
         .collect();
@@ -263,8 +282,8 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
 // ── main loop ─────────────────────────────────────────────────────────────────
 
 async fn main_loop(
-    ctrl_ws:    &mut CtrlWs,
-    data_conn:  &mut Option<DataConn>,
+    ctrl_ws: &mut CtrlWs,
+    data_conn: &mut Option<DataConn>,
     registered: &[(TunnelDef, String)],
 ) -> Result<()> {
     let mut ping_interval = tokio::time::interval(PING_INTERVAL);
@@ -391,10 +410,10 @@ async fn connect_data_ws(server: &str, session_id: Uuid) -> Option<DataConn> {
 
 fn proto_to_enum(proto: &str) -> Result<TunnelProtocol> {
     match proto.to_lowercase().as_str() {
-        "http"  => Ok(TunnelProtocol::Http),
+        "http" => Ok(TunnelProtocol::Http),
         "https" => Ok(TunnelProtocol::Https),
-        "tcp"   => Ok(TunnelProtocol::Tcp),
-        other   => Err(Error::Config(format!("unknown protocol: {other}"))),
+        "tcp" => Ok(TunnelProtocol::Tcp),
+        other => Err(Error::Config(format!("unknown protocol: {other}"))),
     }
 }
 
@@ -436,9 +455,7 @@ async fn recv_frame_timeout(ws: &mut CtrlWs, timeout: Duration) -> Result<Contro
 
 fn parse_binary(msg: Message) -> Result<ControlFrame> {
     match msg {
-        Message::Binary(data) => {
-            decode_frame(&data).map_err(Error::Protocol)
-        }
+        Message::Binary(data) => decode_frame(&data).map_err(Error::Protocol),
         other => Err(Error::Connection(format!(
             "expected binary frame, got {other:?}"
         ))),

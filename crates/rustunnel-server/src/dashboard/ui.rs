@@ -22,7 +22,9 @@ pub fn router() -> Router {
         .route("/*path", get(static_handler))
 }
 
-async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> impl IntoResponse {
+async fn static_handler(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
     serve_asset(&path)
 }
 
@@ -42,9 +44,8 @@ fn serve_asset(path: &str) -> Response<Body> {
                 .status(StatusCode::OK)
                 .header(
                     header::CONTENT_TYPE,
-                    HeaderValue::from_str(mime.as_ref()).unwrap_or_else(|_| {
-                        HeaderValue::from_static("application/octet-stream")
-                    }),
+                    HeaderValue::from_str(mime.as_ref())
+                        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
                 )
                 .body(body)
                 .unwrap()

@@ -65,9 +65,12 @@ async fn main() {
 
     // Load config before tracing is initialised so we can eprintln! on error.
     let config = match ServerConfig::from_file(&cli.config) {
-        Ok(c)  => Arc::new(c),
+        Ok(c) => Arc::new(c),
         Err(e) => {
-            eprintln!("fatal: failed to load config '{}': {e}", cli.config.display());
+            eprintln!(
+                "fatal: failed to load config '{}': {e}",
+                cli.config.display()
+            );
             std::process::exit(1);
         }
     };
@@ -103,9 +106,9 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
         cert = %config.tls.cert_path,
         "initialising TLS certificate manager"
     );
-    let cert_manager  = CertManager::new(Arc::clone(&config)).await?;
-    let tls_handle    = cert_manager.tls_handle();    // hot-swappable handle
-    let tls_snapshot  = cert_manager.get_tls_config(); // static snapshot for HTTP edge
+    let cert_manager = CertManager::new(Arc::clone(&config)).await?;
+    let tls_handle = cert_manager.tls_handle(); // hot-swappable handle
+    let tls_snapshot = cert_manager.get_tls_config(); // static snapshot for HTTP edge
 
     // ── capture channel ───────────────────────────────────────────────────────
 
@@ -113,16 +116,19 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
 
     // ── socket addresses ──────────────────────────────────────────────────────
 
-    let control_addr: SocketAddr =
-        format!("0.0.0.0:{}", config.server.control_port).parse().unwrap();
-    let http_addr: SocketAddr =
-        format!("0.0.0.0:{}", config.server.http_port).parse().unwrap();
-    let https_addr: SocketAddr =
-        format!("0.0.0.0:{}", config.server.https_port).parse().unwrap();
-    let dashboard_addr: SocketAddr =
-        format!("0.0.0.0:{}", config.server.dashboard_port).parse().unwrap();
-    let metrics_addr: SocketAddr =
-        format!("0.0.0.0:{METRICS_PORT}").parse().unwrap();
+    let control_addr: SocketAddr = format!("0.0.0.0:{}", config.server.control_port)
+        .parse()
+        .unwrap();
+    let http_addr: SocketAddr = format!("0.0.0.0:{}", config.server.http_port)
+        .parse()
+        .unwrap();
+    let https_addr: SocketAddr = format!("0.0.0.0:{}", config.server.https_port)
+        .parse()
+        .unwrap();
+    let dashboard_addr: SocketAddr = format!("0.0.0.0:{}", config.server.dashboard_port)
+        .parse()
+        .unwrap();
+    let metrics_addr: SocketAddr = format!("0.0.0.0:{METRICS_PORT}").parse().unwrap();
 
     // ── startup banner ────────────────────────────────────────────────────────
 
@@ -131,8 +137,8 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
     // ── task a: control-plane WebSocket server ────────────────────────────────
 
     let h_control = {
-        let core       = Arc::clone(&core);
-        let cfg        = Arc::clone(&config);
+        let core = Arc::clone(&core);
+        let cfg = Arc::clone(&config);
         let tls_handle = Arc::clone(&tls_handle);
         tokio::spawn(async move {
             if let Err(e) = run_control_plane(control_addr, core, cfg, tls_handle).await {
@@ -144,12 +150,19 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
     // ── task b: HTTP + HTTPS edge proxy ───────────────────────────────────────
 
     let h_http = {
-        let core       = Arc::clone(&core);
-        let domain     = config.server.domain.clone();
+        let core = Arc::clone(&core);
+        let domain = config.server.domain.clone();
         let capture_tx = Some(capture_tx.clone());
         tokio::spawn(async move {
-            if let Err(e) =
-                run_http_edge(http_addr, https_addr, tls_snapshot, core, domain, capture_tx).await
+            if let Err(e) = run_http_edge(
+                http_addr,
+                https_addr,
+                tls_snapshot,
+                core,
+                domain,
+                capture_tx,
+            )
+            .await
             {
                 error!("HTTP edge exited: {e}");
             }
@@ -168,12 +181,11 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
     // ── task d: dashboard API server ──────────────────────────────────────────
 
     let h_dashboard = {
-        let core        = Arc::clone(&core);
-        let pool        = pool.clone();
+        let core = Arc::clone(&core);
+        let pool = pool.clone();
         let admin_token = config.auth.admin_token.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                run_dashboard(dashboard_addr, core, pool, capture_rx, admin_token).await
+            if let Err(e) = run_dashboard(dashboard_addr, core, pool, capture_rx, admin_token).await
             {
                 error!("dashboard exited: {e}");
             }
@@ -203,7 +215,7 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
 
     // Notify every active session so it can close cleanly.
     let session_count = core.sessions.len();
-    let mut notified  = 0usize;
+    let mut notified = 0usize;
     for entry in core.sessions.iter() {
         let _ = entry.value().control_tx.try_send(ControlMessage::Shutdown);
         notified += 1;
@@ -257,9 +269,9 @@ async fn run_metrics(addr: SocketAddr, core: Arc<TunnelCore>) -> Result<()> {
 }
 
 async fn metrics_handler(State(core): State<Arc<TunnelCore>>) -> Response {
-    let sessions     = core.sessions.len();
+    let sessions = core.sessions.len();
     let http_tunnels = core.http_routes.len();
-    let tcp_tunnels  = core.tcp_routes.len();
+    let tcp_tunnels = core.tcp_routes.len();
 
     let body = format!(
         "# HELP rustunnel_active_sessions Number of active client sessions\n\
@@ -284,8 +296,8 @@ async fn metrics_handler(State(core): State<Arc<TunnelCore>>) -> Response {
 fn init_tracing(config: &ServerConfig) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
 
     if config.logging.format == "json" {
         tracing_subscriber::registry()
@@ -329,12 +341,12 @@ async fn wait_for_shutdown_signal() {
 // ── startup banner ────────────────────────────────────────────────────────────
 
 fn print_banner(config: &ServerConfig) {
-    let domain      = &config.server.domain;
-    let ctrl_port   = config.server.control_port;
-    let http_port   = config.server.http_port;
-    let https_port  = config.server.https_port;
-    let dash_port   = config.server.dashboard_port;
-    let dash_url    = format!("http://localhost:{dash_port}");
+    let domain = &config.server.domain;
+    let ctrl_port = config.server.control_port;
+    let http_port = config.server.http_port;
+    let https_port = config.server.https_port;
+    let dash_port = config.server.dashboard_port;
+    let dash_url = format!("http://localhost:{dash_port}");
 
     println!();
     println!("  ██████╗ ██╗   ██╗███████╗████████╗██╗   ██╗███╗   ██╗███╗   ██╗███████╗██╗     ");

@@ -69,7 +69,7 @@ async fn tcp_tunnel_echoes_data() {
 
     // 2. Start the rustunnel server.
     let server = TestServer::start().await;
-    let core   = Arc::clone(&server.core);
+    let core = Arc::clone(&server.core);
 
     // 3. Connect client and register a TCP tunnel.
     let mut client = TestClient::connect(&server).await.expect("auth");
@@ -82,7 +82,9 @@ async fn tcp_tunnel_echoes_data() {
     let core_clone = Arc::clone(&core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client.wait_new_connection().await else { break };
+            let Ok(conn_id) = client.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_clone, conn_id, local_addr).await;
         }
     });
@@ -113,7 +115,7 @@ async fn tcp_tunnel_echoes_larger_payload() {
 
     let (local_addr, _echo_shutdown) = start_echo_server().await;
     let server = TestServer::start().await;
-    let core   = Arc::clone(&server.core);
+    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
     let (_, assigned_port) = client.register_tcp_tunnel().await.expect("register");
@@ -121,7 +123,9 @@ async fn tcp_tunnel_echoes_larger_payload() {
     let core_clone = Arc::clone(&core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client.wait_new_connection().await else { break };
+            let Ok(conn_id) = client.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_clone, conn_id, local_addr).await;
         }
     });
@@ -129,7 +133,9 @@ async fn tcp_tunnel_echoes_larger_payload() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let mut conn = tokio::net::TcpStream::connect(
-        format!("127.0.0.1:{assigned_port}").parse::<SocketAddr>().unwrap(),
+        format!("127.0.0.1:{assigned_port}")
+            .parse::<SocketAddr>()
+            .unwrap(),
     )
     .await
     .expect("connect");
@@ -184,7 +190,7 @@ async fn ping_pong_through_tcp_tunnel() {
 
     let (local_addr, _echo_shutdown) = start_echo_server().await;
     let server = TestServer::start().await;
-    let core   = Arc::clone(&server.core);
+    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
     let (_, port) = client.register_tcp_tunnel().await.expect("register");
@@ -192,18 +198,19 @@ async fn ping_pong_through_tcp_tunnel() {
     let core_clone = Arc::clone(&core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client.wait_new_connection().await else { break };
+            let Ok(conn_id) = client.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_clone, conn_id, local_addr).await;
         }
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let mut conn = tokio::net::TcpStream::connect(
-        format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap(),
-    )
-    .await
-    .expect("connect to tunnel port");
+    let mut conn =
+        tokio::net::TcpStream::connect(format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap())
+            .await
+            .expect("connect to tunnel port");
 
     conn.write_all(b"ping").await.expect("write");
     let mut buf = [0u8; 4];

@@ -33,17 +33,17 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use instant_acme::{
-    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier,
-    LetsEncrypt, NewAccount, NewOrder, OrderStatus,
+    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt,
+    NewAccount, NewOrder, OrderStatus,
 };
 use rcgen::{CertificateParams, KeyPair};
 use reqwest::Client;
 use rustls::pki_types::CertificateDer;
-use x509_parser::prelude::FromDer;
 use rustls::ServerConfig as RustlsConfig;
 use rustls_pemfile::{certs, private_key};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
+use x509_parser::prelude::FromDer;
 
 use crate::config::ServerConfig as AppConfig;
 use crate::error::{Error, Result};
@@ -93,17 +93,13 @@ impl CertManager {
             if cert_missing || cert_expiring {
                 info!(
                     cert_missing,
-                    cert_expiring,
-                    "running ACME issuance before startup"
+                    cert_expiring, "running ACME issuance before startup"
                 );
                 run_acme(&app_config).await?;
             }
         }
 
-        let tls_cfg = build_tls_config(
-            &app_config.tls.cert_path,
-            &app_config.tls.key_path,
-        )?;
+        let tls_cfg = build_tls_config(&app_config.tls.cert_path, &app_config.tls.key_path)?;
 
         let manager = Arc::new(Self {
             app_config,
@@ -131,8 +127,7 @@ impl CertManager {
     pub fn start_renewal_task(self: Arc<Self>) {
         tokio::spawn(async move {
             // Start checking after 24 hours; avoids hammering ACME on restart.
-            let mut ticker =
-                tokio::time::interval(Duration::from_secs(86_400));
+            let mut ticker = tokio::time::interval(Duration::from_secs(86_400));
             ticker.tick().await; // skip immediate first tick
 
             loop {
@@ -179,9 +174,12 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
     let http = Client::new();
 
     // 1. Load or create ACME account ─────────────────────────────────────────
-    let account =
-        load_or_create_account(&cfg.tls.acme_email, &cfg.tls.acme_account_dir, cfg.tls.acme_staging)
-            .await?;
+    let account = load_or_create_account(
+        &cfg.tls.acme_email,
+        &cfg.tls.acme_account_dir,
+        cfg.tls.acme_staging,
+    )
+    .await?;
 
     // 2. Create order ─────────────────────────────────────────────────────────
     let identifiers = [
@@ -189,7 +187,9 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
         Identifier::Dns(format!("*.{domain}")),
     ];
     let mut order = account
-        .new_order(&NewOrder { identifiers: &identifiers })
+        .new_order(&NewOrder {
+            identifiers: &identifiers,
+        })
         .await
         .map_err(|e| Error::Acme(format!("new order: {e}")))?;
 
@@ -222,14 +222,8 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
 
         info!(%record_name, "creating Cloudflare TXT record for DNS-01 challenge");
 
-        let record_id = cloudflare_create_txt(
-            &http,
-            &cf_token,
-            &cf_zone_id,
-            &record_name,
-            &dns_value,
-        )
-        .await?;
+        let record_id =
+            cloudflare_create_txt(&http, &cf_token, &cf_zone_id, &record_name, &dns_value).await?;
 
         created_record_ids.push(record_id);
 
@@ -247,8 +241,7 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
     poll_until_ready(&mut order).await?;
 
     // 6. Generate key pair + CSR and finalize ────────────────────────────────
-    let key_pair =
-        KeyPair::generate().map_err(|e| Error::Acme(format!("key generation: {e}")))?;
+    let key_pair = KeyPair::generate().map_err(|e| Error::Acme(format!("key generation: {e}")))?;
 
     let params = CertificateParams::new(vec![domain.clone(), format!("*.{domain}")])
         .map_err(|e| Error::Acme(format!("cert params: {e}")))?;
@@ -284,9 +277,7 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
 
     // 9. Remove Cloudflare TXT records ───────────────────────────────────────
     for record_id in &created_record_ids {
-        if let Err(e) =
-            cloudflare_delete_txt(&http, &cf_token, &cf_zone_id, record_id).await
-        {
+        if let Err(e) = cloudflare_delete_txt(&http, &cf_token, &cf_zone_id, record_id).await {
             warn!(%record_id, "failed to delete DNS TXT record: {e}");
         }
     }
@@ -296,11 +287,7 @@ async fn run_acme(cfg: &AppConfig) -> Result<()> {
 
 // ── ACME account management ───────────────────────────────────────────────────
 
-async fn load_or_create_account(
-    email: &str,
-    account_dir: &str,
-    staging: bool,
-) -> Result<Account> {
+async fn load_or_create_account(email: &str, account_dir: &str, staging: bool) -> Result<Account> {
     let account_file = Path::new(account_dir).join("acme-account.json");
 
     if account_file.exists() {
@@ -327,9 +314,9 @@ async fn load_or_create_account(
 
         let (account, credentials) = Account::create(
             &NewAccount {
-                contact:                  &[&format!("mailto:{email}")],
-                terms_of_service_agreed:  true,
-                only_return_existing:     false,
+                contact: &[&format!("mailto:{email}")],
+                terms_of_service_agreed: true,
+                only_return_existing: false,
             },
             server_url,
             None,
@@ -413,22 +400,22 @@ async fn poll_certificate(order: &mut instant_acme::Order) -> Result<String> {
 #[derive(Serialize)]
 struct CreateTxtRecord<'a> {
     r#type: &'a str,
-    name:    &'a str,
+    name: &'a str,
     content: &'a str,
-    ttl:     u32,
+    ttl: u32,
 }
 
 #[derive(Deserialize)]
 struct CfResponse<T> {
     success: bool,
-    result:  Option<T>,
-    errors:  Vec<CfError>,
+    result: Option<T>,
+    errors: Vec<CfError>,
 }
 
 #[derive(Deserialize)]
 struct CfError {
     #[allow(dead_code)]
-    code:    u32,
+    code: u32,
     message: String,
 }
 
@@ -439,10 +426,10 @@ struct CfDnsRecord {
 
 /// Create a DNS TXT record and return its Cloudflare record ID.
 async fn cloudflare_create_txt(
-    client:  &Client,
-    token:   &str,
+    client: &Client,
+    token: &str,
     zone_id: &str,
-    name:    &str,
+    name: &str,
     content: &str,
 ) -> Result<String> {
     let url = format!("{CF_API}/zones/{zone_id}/dns_records");
@@ -450,7 +437,12 @@ async fn cloudflare_create_txt(
     let resp: CfResponse<CfDnsRecord> = client
         .post(&url)
         .bearer_auth(token)
-        .json(&CreateTxtRecord { r#type: "TXT", name, content, ttl: 60 })
+        .json(&CreateTxtRecord {
+            r#type: "TXT",
+            name,
+            content,
+            ttl: 60,
+        })
         .send()
         .await
         .map_err(|e| Error::Acme(format!("Cloudflare API request: {e}")))?
@@ -474,9 +466,9 @@ async fn cloudflare_create_txt(
 
 /// Delete a Cloudflare DNS record by its ID.
 async fn cloudflare_delete_txt(
-    client:    &Client,
-    token:     &str,
-    zone_id:   &str,
+    client: &Client,
+    token: &str,
+    zone_id: &str,
     record_id: &str,
 ) -> Result<()> {
     let url = format!("{CF_API}/zones/{zone_id}/dns_records/{record_id}");
@@ -546,9 +538,9 @@ fn cert_expiring_within(path: &str, threshold_days: i64) -> bool {
         }
     };
 
-    let not_after   = cert.validity().not_after.timestamp();
-    let now         = chrono::Utc::now().timestamp();
-    let remaining   = (not_after - now) / 86_400; // days
+    let not_after = cert.validity().not_after.timestamp();
+    let now = chrono::Utc::now().timestamp();
+    let remaining = (not_after - now) / 86_400; // days
 
     debug!(%path, remaining_days = remaining, threshold_days, "cert expiry check");
     remaining < threshold_days

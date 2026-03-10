@@ -123,7 +123,7 @@ async fn main() {
 async fn run(cli: Cli) -> error::Result<()> {
     match cli.command {
         Commands::Http(args) => run_tunnel("http", args).await,
-        Commands::Tcp(args)  => run_tunnel("tcp",  args).await,
+        Commands::Tcp(args) => run_tunnel("tcp", args).await,
         Commands::Start(args) => run_start(args).await,
         Commands::Token(cmd) => run_token(cmd).await,
     }
@@ -154,7 +154,7 @@ async fn run_tunnel(proto: &str, args: TunnelArgs) -> error::Result<()> {
 async fn run_start(args: StartArgs) -> error::Result<()> {
     let cfg = match args.config {
         Some(path) => ClientConfig::load_from(&path)?,
-        None       => ClientConfig::load_default()?,
+        None => ClientConfig::load_default()?,
     };
     cfg.validate()?;
 
@@ -171,7 +171,11 @@ async fn run_start(args: StartArgs) -> error::Result<()> {
 
 async fn run_token(cmd: TokenCmd) -> error::Result<()> {
     match cmd.action {
-        TokenAction::Create { name, server, admin_token } => {
+        TokenAction::Create {
+            name,
+            server,
+            admin_token,
+        } => {
             let dashboard = server.unwrap_or_else(|| "localhost:4040".to_string());
             let token = admin_token.unwrap_or_default();
 
@@ -197,9 +201,9 @@ async fn run_token(cmd: TokenCmd) -> error::Result<()> {
             } else {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                return Err(error::Error::Connection(
-                    format!("token creation failed ({status}): {text}")
-                ));
+                return Err(error::Error::Connection(format!(
+                    "token creation failed ({status}): {text}"
+                )));
             }
         }
     }

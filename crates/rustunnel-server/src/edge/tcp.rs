@@ -95,8 +95,8 @@ pub async fn run_tcp_edge(core: Arc<TunnelCore>) {
 // ── per-port listener ─────────────────────────────────────────────────────────
 
 fn spawn_port_listener(
-    port:     u16,
-    core:     Arc<TunnelCore>,
+    port: u16,
+    core: Arc<TunnelCore>,
     join_set: &mut JoinSet<()>,
 ) -> tokio::task::AbortHandle {
     join_set.spawn(async move {
@@ -134,14 +134,14 @@ async fn port_listener(port: u16, core: Arc<TunnelCore>) -> Result<()> {
 
 async fn proxy_tcp_connection(
     mut public_tcp: tokio::net::TcpStream,
-    peer:           SocketAddr,
-    port:           u16,
-    core:           Arc<TunnelCore>,
+    peer: SocketAddr,
+    port: u16,
+    core: Arc<TunnelCore>,
 ) -> Result<()> {
     // ── resolve tunnel ────────────────────────────────────────────────────
-    let (tunnel_info, control_tx) = core.resolve_tcp(port).ok_or_else(|| {
-        Error::Tunnel(format!("no TCP tunnel on port {port}"))
-    })?;
+    let (tunnel_info, control_tx) = core
+        .resolve_tcp(port)
+        .ok_or_else(|| Error::Tunnel(format!("no TCP tunnel on port {port}")))?;
 
     let conn_id = Uuid::new_v4();
     info!(
@@ -164,7 +164,7 @@ async fn proxy_tcp_connection(
 
     // ── wait for data stream ──────────────────────────────────────────────
     let yamux_stream = match timeout(STREAM_TIMEOUT, stream_rx).await {
-        Ok(Ok(s))  => s,
+        Ok(Ok(s)) => s,
         Ok(Err(_)) => {
             return Err(Error::Tunnel("pending-conn sender dropped".into()));
         }
@@ -199,13 +199,12 @@ async fn proxy_tcp_connection(
 /// Compare the live `tcp_routes` in `core` against the map of running
 /// listener tasks, stopping stale ones and starting missing ones.
 fn resync_listeners(
-    handles:  &mut HashMap<u16, tokio::task::AbortHandle>,
-    core:     &Arc<TunnelCore>,
+    handles: &mut HashMap<u16, tokio::task::AbortHandle>,
+    core: &Arc<TunnelCore>,
     join_set: &mut JoinSet<()>,
 ) {
     // Collect currently active ports.
-    let active: std::collections::HashSet<u16> =
-        core.tcp_routes.iter().map(|e| *e.key()).collect();
+    let active: std::collections::HashSet<u16> = core.tcp_routes.iter().map(|e| *e.key()).collect();
 
     // Stop listeners whose tunnels no longer exist.
     handles.retain(|port, handle| {
@@ -231,9 +230,9 @@ fn resync_listeners(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TunnelCore;
     use std::net::SocketAddr;
     use tokio::sync::mpsc;
-    use crate::core::TunnelCore;
 
     fn make_core() -> Arc<TunnelCore> {
         Arc::new(TunnelCore::new([25000, 25010], 5))
@@ -254,10 +253,10 @@ mod tests {
 
         let (_tid, port) = core.register_tcp_tunnel(&sid).unwrap();
 
-        let event = tokio::time::timeout(
-            Duration::from_millis(100),
-            rx.recv(),
-        ).await.expect("event within timeout").unwrap();
+        let event = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("event within timeout")
+            .unwrap();
 
         match event {
             TcpTunnelEvent::Registered { port: p, .. } => assert_eq!(p, port),
@@ -277,10 +276,10 @@ mod tests {
 
         core.remove_tunnel(&tid);
 
-        let event = tokio::time::timeout(
-            Duration::from_millis(100),
-            rx.recv(),
-        ).await.expect("event within timeout").unwrap();
+        let event = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("event within timeout")
+            .unwrap();
 
         match event {
             TcpTunnelEvent::Unregistered { port: p } => assert_eq!(p, port),

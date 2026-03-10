@@ -41,7 +41,9 @@ async fn valid_token_returns_auth_ok() {
     init_tracing();
     let server = TestServer::start().await;
 
-    let client = TestClient::connect(&server).await.expect("auth should succeed");
+    let client = TestClient::connect(&server)
+        .await
+        .expect("auth should succeed");
 
     assert!(
         client.session_id.is_some(),
@@ -91,10 +93,7 @@ async fn rotated_admin_token_rejects_old_credential() {
         .await
         .expect("should receive AuthError for old token");
 
-    assert!(
-        !err.is_empty(),
-        "should report an auth error; got: {err}"
-    );
+    assert!(!err.is_empty(), "should report an auth error; got: {err}");
 }
 
 // ── 5. Two concurrent sessions from same server ───────────────────────────────
@@ -124,9 +123,9 @@ async fn two_concurrent_sessions_are_independent() {
 async fn dashboard_token_crud_works() {
     init_tracing();
     let server = TestServer::start().await;
-    let base    = format!("http://127.0.0.1:{}", server.dashboard_port);
-    let client  = insecure_http_client();
-    let auth    = format!("Bearer {}", server.admin_token);
+    let base = format!("http://127.0.0.1:{}", server.dashboard_port);
+    let client = insecure_http_client();
+    let auth = format!("Bearer {}", server.admin_token);
 
     // Create a token.
     let resp = client
@@ -157,7 +156,10 @@ async fn dashboard_token_crud_works() {
         .iter()
         .filter_map(|t| t["id"].as_str())
         .collect();
-    assert!(ids.contains(&token_id.as_str()), "new token must appear in list");
+    assert!(
+        ids.contains(&token_id.as_str()),
+        "new token must appear in list"
+    );
 
     // Delete the token.
     let resp = client

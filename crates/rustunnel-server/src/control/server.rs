@@ -14,9 +14,9 @@ use tokio_tungstenite::accept_async;
 use rustls::ServerConfig as RustlsConfig;
 
 use crate::config::ServerConfig;
+use crate::control::session::handle_session;
 use crate::core::TunnelCore;
 use crate::error::Result;
-use crate::control::session::handle_session;
 
 /// Start the control-plane listener.
 ///
@@ -28,9 +28,9 @@ use crate::control::session::handle_session;
 /// renewals performed by [`crate::tls::CertManager`] are picked up
 /// immediately without restarting.
 pub async fn run_control_plane(
-    addr:       SocketAddr,
-    core:       Arc<TunnelCore>,
-    config:     Arc<ServerConfig>,
+    addr: SocketAddr,
+    core: Arc<TunnelCore>,
+    config: Arc<ServerConfig>,
     tls_config: Arc<ArcSwap<RustlsConfig>>,
 ) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
@@ -50,8 +50,8 @@ pub async fn run_control_plane(
         // Per-connection: snapshot the current rustls config so renewed certs
         // take effect on the very next connection.
         let acceptor = TlsAcceptor::from(Arc::clone(&tls_config.load()));
-        let core     = core.clone();
-        let config   = config.clone();
+        let core = core.clone();
+        let config = config.clone();
 
         tokio::spawn(async move {
             // TLS handshake.

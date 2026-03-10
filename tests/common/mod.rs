@@ -43,9 +43,7 @@ use rustunnel_server::tls::acme::build_tls_config;
 /// A `rustls::ClientConfig` that accepts any server certificate.
 /// For use in tests only — never in production.
 pub fn insecure_client_tls() -> Arc<ClientConfig> {
-    use rustls::client::danger::{
-        HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
-    };
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
     use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
     use rustls::DigitallySignedStruct;
 
@@ -140,15 +138,15 @@ pub fn generate_test_cert(dir: &TempDir) -> (String, String) {
 
 /// A running server instance with all components live on random ports.
 pub struct TestServer {
-    pub control_port:  u16,
-    pub http_port:     u16,
-    pub https_port:    u16,
+    pub control_port: u16,
+    pub http_port: u16,
+    pub https_port: u16,
     pub dashboard_port: u16,
-    pub domain:        String,
-    pub admin_token:   String,
-    pub core:          Arc<TunnelCore>,
-    pub pool:          SqlitePool,
-    pub config:        Arc<ServerConfig>,
+    pub domain: String,
+    pub admin_token: String,
+    pub core: Arc<TunnelCore>,
+    pub pool: SqlitePool,
+    pub config: Arc<ServerConfig>,
 
     // Kept alive for the test's duration.
     _temp_dir: TempDir,
@@ -163,16 +161,21 @@ impl TestServer {
 
     /// Start a server with configurable auth settings.
     pub async fn start_with(require_auth: bool, admin_token: &str) -> Self {
-        let control_port   = free_port();
-        let http_port      = free_port();
-        let https_port     = free_port();
+        let control_port = free_port();
+        let http_port = free_port();
+        let https_port = free_port();
         let dashboard_port = free_port();
-        let tcp_low        = free_port();
+        let tcp_low = free_port();
         // Reserve a small range; each test gets its own server so no overlap.
-        let tcp_high       = tcp_low.saturating_add(9);
+        let tcp_high = tcp_low.saturating_add(9);
         Self::start_on_ports(
-            control_port, http_port, https_port, dashboard_port,
-            [tcp_low, tcp_high], require_auth, admin_token,
+            control_port,
+            http_port,
+            https_port,
+            dashboard_port,
+            [tcp_low, tcp_high],
+            require_auth,
+            admin_token,
         )
         .await
     }
@@ -180,37 +183,42 @@ impl TestServer {
     /// Start a server on specific pre-allocated ports.
     /// Used by reconnect tests to restart on the same port set.
     pub async fn start_on_ports(
-        control_port:   u16,
-        http_port:      u16,
-        https_port:     u16,
+        control_port: u16,
+        http_port: u16,
+        https_port: u16,
         dashboard_port: u16,
         tcp_port_range: [u16; 2],
-        require_auth:   bool,
-        admin_token:    &str,
+        require_auth: bool,
+        admin_token: &str,
     ) -> Self {
         let [tcp_low, tcp_high] = tcp_port_range;
 
         let temp_dir = TempDir::new().expect("temp dir");
         let (cert_path, key_path) = generate_test_cert(&temp_dir);
-        let db_path = temp_dir.path().join("test.db").to_str().unwrap().to_string();
+        let db_path = temp_dir
+            .path()
+            .join("test.db")
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let config = Arc::new(ServerConfig {
             server: ServerSection {
-                domain:         "localhost".to_string(),
+                domain: "localhost".to_string(),
                 http_port,
                 https_port,
                 control_port,
                 dashboard_port,
             },
             tls: TlsSection {
-                cert_path:           cert_path.clone(),
-                key_path:            key_path.clone(),
-                acme_enabled:        false,
-                acme_email:          String::new(),
-                acme_staging:        false,
-                acme_account_dir:    temp_dir.path().to_str().unwrap().to_string(),
+                cert_path: cert_path.clone(),
+                key_path: key_path.clone(),
+                acme_enabled: false,
+                acme_email: String::new(),
+                acme_staging: false,
+                acme_account_dir: temp_dir.path().to_str().unwrap().to_string(),
                 cloudflare_api_token: String::new(),
-                cloudflare_zone_id:  String::new(),
+                cloudflare_zone_id: String::new(),
             },
             auth: AuthSection {
                 admin_token: admin_token.to_string(),
@@ -218,15 +226,15 @@ impl TestServer {
             },
             database: DatabaseSection { path: db_path },
             logging: LoggingSection {
-                level:  "warn".to_string(),
+                level: "warn".to_string(),
                 format: "pretty".to_string(),
             },
             limits: LimitsSection {
-                max_tunnels_per_session:     10,
-                max_connections_per_tunnel:  100,
-                rate_limit_rps:              10_000,
-                request_body_max_bytes:      1024 * 1024,
-                tcp_port_range:              [tcp_low, tcp_high],
+                max_tunnels_per_session: 10,
+                max_connections_per_tunnel: 100,
+                rate_limit_rps: 10_000,
+                request_body_max_bytes: 1024 * 1024,
+                tcp_port_range: [tcp_low, tcp_high],
             },
         });
 
@@ -237,7 +245,7 @@ impl TestServer {
 
         // TLS.
         let tls_cfg = build_tls_config(&cert_path, &key_path).expect("build_tls_config");
-        let tls_handle   = Arc::new(ArcSwap::new(Arc::new(tls_cfg)));
+        let tls_handle = Arc::new(ArcSwap::new(Arc::new(tls_cfg)));
         let tls_snapshot = tls_handle.load_full();
 
         // Shared tunnel core.
@@ -250,31 +258,39 @@ impl TestServer {
         let mut task_handles = Vec::new();
 
         // a) Control plane.
-        let control_addr: SocketAddr =
-            format!("127.0.0.1:{control_port}").parse().unwrap();
+        let control_addr: SocketAddr = format!("127.0.0.1:{control_port}").parse().unwrap();
         let h = tokio::spawn({
-            let core       = Arc::clone(&core);
-            let cfg        = Arc::clone(&config);
+            let core = Arc::clone(&core);
+            let cfg = Arc::clone(&config);
             let tls_handle = Arc::clone(&tls_handle);
             async move {
                 let _ = rustunnel_server::control::server::run_control_plane(
-                    control_addr, core, cfg, tls_handle,
-                ).await;
+                    control_addr,
+                    core,
+                    cfg,
+                    tls_handle,
+                )
+                .await;
             }
         });
         task_handles.push(h.abort_handle());
 
         // b) HTTP + HTTPS edge.
-        let http_addr:  SocketAddr = format!("127.0.0.1:{http_port}").parse().unwrap();
+        let http_addr: SocketAddr = format!("127.0.0.1:{http_port}").parse().unwrap();
         let https_addr: SocketAddr = format!("127.0.0.1:{https_port}").parse().unwrap();
         let h = tokio::spawn({
-            let core   = Arc::clone(&core);
+            let core = Arc::clone(&core);
             let domain = config.server.domain.clone();
             async move {
                 let _ = rustunnel_server::edge::run_http_edge(
-                    http_addr, https_addr, tls_snapshot, core, domain,
+                    http_addr,
+                    https_addr,
+                    tls_snapshot,
+                    core,
+                    domain,
                     Some(capture_tx),
-                ).await;
+                )
+                .await;
             }
         });
         task_handles.push(h.abort_handle());
@@ -282,21 +298,27 @@ impl TestServer {
         // c) TCP edge.
         let h = tokio::spawn({
             let core = Arc::clone(&core);
-            async move { rustunnel_server::edge::run_tcp_edge(core).await; }
+            async move {
+                rustunnel_server::edge::run_tcp_edge(core).await;
+            }
         });
         task_handles.push(h.abort_handle());
 
         // d) Dashboard.
-        let dashboard_addr: SocketAddr =
-            format!("127.0.0.1:{dashboard_port}").parse().unwrap();
+        let dashboard_addr: SocketAddr = format!("127.0.0.1:{dashboard_port}").parse().unwrap();
         let h = tokio::spawn({
-            let core        = Arc::clone(&core);
-            let pool        = pool.clone();
+            let core = Arc::clone(&core);
+            let pool = pool.clone();
             let admin_token = config.auth.admin_token.clone();
             async move {
                 let _ = rustunnel_server::dashboard::run_dashboard(
-                    dashboard_addr, core, pool, capture_rx, admin_token,
-                ).await;
+                    dashboard_addr,
+                    core,
+                    pool,
+                    capture_rx,
+                    admin_token,
+                )
+                .await;
             }
         });
         task_handles.push(h.abort_handle());
@@ -309,12 +331,12 @@ impl TestServer {
             http_port,
             https_port,
             dashboard_port,
-            domain:      "localhost".to_string(),
+            domain: "localhost".to_string(),
             admin_token: admin_token.to_string(),
             core,
             pool,
             config,
-            _temp_dir:    temp_dir,
+            _temp_dir: temp_dir,
             task_handles,
         }
     }
@@ -340,7 +362,7 @@ type CtrlWs = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 /// A test control-plane client that speaks the binary WebSocket protocol
 /// directly (no CLI, no reconnect logic).
 pub struct TestClient {
-    ws:         CtrlWs,
+    ws: CtrlWs,
     pub session_id: Option<Uuid>,
 }
 
@@ -350,21 +372,20 @@ impl TestClient {
         let url = format!("wss://127.0.0.1:{}/", server.control_port);
 
         let connector = Connector::Rustls(insecure_client_tls());
-        let (ws, _) = tokio_tungstenite::connect_async_tls_with_config(
-            &url,
-            None,
-            false,
-            Some(connector),
-        )
-        .await
-        .map_err(|e| format!("WS connect: {e}"))?;
+        let (ws, _) =
+            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+                .await
+                .map_err(|e| format!("WS connect: {e}"))?;
 
-        let mut client = Self { ws, session_id: None };
+        let mut client = Self {
+            ws,
+            session_id: None,
+        };
 
         // Send Auth frame.
         client
             .send(&ControlFrame::Auth {
-                token:          token.to_string(),
+                token: token.to_string(),
                 client_version: "test".to_string(),
             })
             .await?;
@@ -388,31 +409,30 @@ impl TestClient {
     /// Connect and expect the auth to fail, returning the error message.
     pub async fn connect_expect_auth_error(
         server: &TestServer,
-        token:  &str,
+        token: &str,
     ) -> Result<String, String> {
         let url = format!("wss://127.0.0.1:{}/", server.control_port);
         let connector = Connector::Rustls(insecure_client_tls());
-        let (ws, _) = tokio_tungstenite::connect_async_tls_with_config(
-            &url,
-            None,
-            false,
-            Some(connector),
-        )
-        .await
-        .map_err(|e| format!("WS connect: {e}"))?;
+        let (ws, _) =
+            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+                .await
+                .map_err(|e| format!("WS connect: {e}"))?;
 
-        let mut client = Self { ws, session_id: None };
+        let mut client = Self {
+            ws,
+            session_id: None,
+        };
 
         client
             .send(&ControlFrame::Auth {
-                token:          token.to_string(),
+                token: token.to_string(),
                 client_version: "test".to_string(),
             })
             .await?;
 
         match client.recv_timeout(Duration::from_secs(5)).await? {
             ControlFrame::AuthError { message } => Ok(message),
-            ControlFrame::AuthOk { .. }         => Err("expected AuthError but got AuthOk".into()),
+            ControlFrame::AuthOk { .. } => Err("expected AuthError but got AuthOk".into()),
             other => Err(format!("unexpected frame: {other:?}")),
         }
     }
@@ -427,14 +447,18 @@ impl TestClient {
         let req_id = Uuid::new_v4().to_string();
         self.send(&ControlFrame::RegisterTunnel {
             request_id: req_id.clone(),
-            protocol:   TunnelProtocol::Http,
-            subdomain:  subdomain.map(str::to_string),
+            protocol: TunnelProtocol::Http,
+            subdomain: subdomain.map(str::to_string),
             local_addr: "127.0.0.1:0".to_string(), // advisory only
         })
         .await?;
 
         match self.recv_timeout(Duration::from_secs(5)).await? {
-            ControlFrame::TunnelRegistered { tunnel_id, public_url, .. } => {
+            ControlFrame::TunnelRegistered {
+                tunnel_id,
+                public_url,
+                ..
+            } => {
                 // Derive the subdomain from the public_url.
                 let sub = public_url
                     .trim_start_matches("http://")
@@ -444,9 +468,7 @@ impl TestClient {
                     .to_string();
                 Ok((tunnel_id, sub, public_url))
             }
-            ControlFrame::TunnelError { message, .. } => {
-                Err(format!("TunnelError: {message}"))
-            }
+            ControlFrame::TunnelError { message, .. } => Err(format!("TunnelError: {message}")),
             other => Err(format!("unexpected frame: {other:?}")),
         }
     }
@@ -456,20 +478,22 @@ impl TestClient {
         let req_id = Uuid::new_v4().to_string();
         self.send(&ControlFrame::RegisterTunnel {
             request_id: req_id,
-            protocol:   TunnelProtocol::Tcp,
-            subdomain:  None,
+            protocol: TunnelProtocol::Tcp,
+            subdomain: None,
             local_addr: "127.0.0.1:0".to_string(),
         })
         .await?;
 
         match self.recv_timeout(Duration::from_secs(5)).await? {
-            ControlFrame::TunnelRegistered { tunnel_id, assigned_port, .. } => {
+            ControlFrame::TunnelRegistered {
+                tunnel_id,
+                assigned_port,
+                ..
+            } => {
                 let port = assigned_port.ok_or("missing assigned_port")?;
                 Ok((tunnel_id, port))
             }
-            ControlFrame::TunnelError { message, .. } => {
-                Err(format!("TunnelError: {message}"))
-            }
+            ControlFrame::TunnelError { message, .. } => Err(format!("TunnelError: {message}")),
             other => Err(format!("unexpected frame: {other:?}")),
         }
     }
@@ -492,9 +516,7 @@ impl TestClient {
             .map_err(|e| format!("recv: {e}"))?;
 
         match msg {
-            Message::Binary(data) => {
-                decode_frame(&data).map_err(|e| format!("decode: {e}"))
-            }
+            Message::Binary(data) => decode_frame(&data).map_err(|e| format!("decode: {e}")),
             other => Err(format!("expected binary frame, got {other:?}")),
         }
     }
@@ -504,7 +526,7 @@ impl TestClient {
         let deadline = Duration::from_secs(10);
         match self.recv_timeout(deadline).await? {
             ControlFrame::NewConnection { conn_id, .. } => Ok(conn_id),
-            ControlFrame::Ping { timestamp }            => {
+            ControlFrame::Ping { timestamp } => {
                 // Reply with Pong and retry.
                 self.send(&ControlFrame::Pong { timestamp }).await?;
                 match self.recv_timeout(deadline).await? {
@@ -535,9 +557,7 @@ impl TestClient {
 /// * `proxy_rx`    — resolves to the proxy-side stream *after* the edge writes
 ///                   its first byte; the proxy task awaits this before bridging
 ///                   to the local service.
-pub async fn make_yamux_pair()
-    -> (yamux::Stream, tokio::sync::oneshot::Receiver<yamux::Stream>)
-{
+pub async fn make_yamux_pair() -> (yamux::Stream, tokio::sync::oneshot::Receiver<yamux::Stream>) {
     // Large buffer so a full HTTP response fits without backpressure.
     let (io_a, io_b) = tokio::io::duplex(2 * 1024 * 1024);
 
@@ -574,7 +594,9 @@ pub async fn make_yamux_pair()
         let mut conn = Connection::new(io_a.compat(), YamuxConfig::default(), Mode::Client);
         // This await returns only after the server side sends DATA+SYN.
         match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
-            Some(Ok(stream)) => { let _ = proxy_tx.send(stream); }
+            Some(Ok(stream)) => {
+                let _ = proxy_tx.send(stream);
+            }
             _ => {} // connection closed before a stream arrived
         }
         // Keep driving for subsequent data frames.
@@ -591,7 +613,9 @@ pub async fn make_yamux_pair()
         }
     });
 
-    let edge_stream = edge_rx.await.expect("yamux server driver died before opening stream");
+    let edge_stream = edge_rx
+        .await
+        .expect("yamux server driver died before opening stream");
     (edge_stream, proxy_rx)
 }
 
@@ -600,11 +624,7 @@ pub async fn make_yamux_pair()
 /// 2. Delivers `edge_stream` to the waiting edge task via `resolve_pending_conn`.
 /// 3. Spawns a proxy task that waits for the proxy-side stream (appears once
 ///    the edge writes its first byte), then bridges it to `local_addr`.
-pub async fn inject_proxy(
-    core:       &Arc<TunnelCore>,
-    conn_id:    Uuid,
-    local_addr: SocketAddr,
-) {
+pub async fn inject_proxy(core: &Arc<TunnelCore>, conn_id: Uuid, local_addr: SocketAddr) {
     let (edge_stream, proxy_rx) = make_yamux_pair().await;
 
     // Deliver the stream to the waiting edge task.
@@ -616,12 +636,18 @@ pub async fn inject_proxy(
         use tokio_util::compat::FuturesAsyncReadCompatExt;
 
         let proxy_stream = match proxy_rx.await {
-            Ok(s)  => s,
-            Err(_) => { eprintln!("[test proxy] yamux proxy stream never appeared"); return; }
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("[test proxy] yamux proxy stream never appeared");
+                return;
+            }
         };
         let mut local = match tokio::net::TcpStream::connect(local_addr).await {
-            Ok(s)  => s,
-            Err(e) => { eprintln!("[test proxy] connect {local_addr}: {e}"); return; }
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[test proxy] connect {local_addr}: {e}");
+                return;
+            }
         };
         let mut remote = proxy_stream.compat();
         let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;

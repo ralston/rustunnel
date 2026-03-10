@@ -21,26 +21,45 @@ pub fn print_startup_box(tunnels: &[TunnelDisplay]) {
     let width = 60usize;
     let border = style("─".repeat(width)).cyan().to_string();
 
-    println!("{}", style("╭").cyan().to_string() + &border + &style("╮").cyan().to_string());
+    println!(
+        "{}",
+        style("╭").cyan().to_string() + &border + &style("╮").cyan().to_string()
+    );
     println!(
         "{}  {}  {}",
         style("│").cyan(),
         style(format!("{:^56}", "rustunnel")).bold(),
         style("│").cyan()
     );
-    println!("{}", style("├").cyan().to_string() + &border + &style("┤").cyan().to_string());
+    println!(
+        "{}",
+        style("├").cyan().to_string() + &border + &style("┤").cyan().to_string()
+    );
 
     for t in tunnels {
-        let label = style(format!(" {:>4}", t.proto.to_uppercase())).bold().yellow();
-        let name  = style(format!("[{}]", t.name)).dim();
+        let label = style(format!(" {:>4}", t.proto.to_uppercase()))
+            .bold()
+            .yellow();
+        let name = style(format!("[{}]", t.name)).dim();
         let arrow = style("→").dim();
         let local = style(&t.local).dim();
-        let url   = style(&t.public_url).green().bold();
-        println!("{} {} {} {} {}  {}", style("│").cyan(), label, name, arrow, local, style("│").cyan());
+        let url = style(&t.public_url).green().bold();
+        println!(
+            "{} {} {} {} {}  {}",
+            style("│").cyan(),
+            label,
+            name,
+            arrow,
+            local,
+            style("│").cyan()
+        );
         println!("{}   {}  {}", style("│").cyan(), url, style("│").cyan());
     }
 
-    println!("{}", style("╰").cyan().to_string() + &border + &style("╯").cyan().to_string());
+    println!(
+        "{}",
+        style("╰").cyan().to_string() + &border + &style("╯").cyan().to_string()
+    );
     println!();
     println!(
         "  {} {}",

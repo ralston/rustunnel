@@ -99,15 +99,13 @@ pub async fn create_token(pool: &SqlitePool, label: &str) -> Result<(Token, Stri
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
-    sqlx::query(
-        "INSERT INTO tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(&hash)
-    .bind(label)
-    .bind(now.to_rfc3339())
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(&hash)
+        .bind(label)
+        .bind(now.to_rfc3339())
+        .execute(pool)
+        .await?;
 
     let token = Token {
         id,

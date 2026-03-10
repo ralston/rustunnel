@@ -41,7 +41,9 @@ async fn start_hello_world_server() -> (SocketAddr, oneshot::Sender<()>) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
         axum::serve(listener, app)
-            .with_graceful_shutdown(async { let _ = shutdown_rx.await; })
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
             .await
             .ok();
     });
@@ -63,12 +65,10 @@ async fn http_tunnel_proxies_hello_world() {
 
     // 2. Start the rustunnel server.
     let server = TestServer::start().await;
-    let core   = Arc::clone(&server.core);
+    let core = Arc::clone(&server.core);
 
     // 3. Connect test client and register an HTTP tunnel.
-    let mut client = TestClient::connect(&server)
-        .await
-        .expect("client auth");
+    let mut client = TestClient::connect(&server).await.expect("client auth");
 
     let (_tunnel_id, subdomain, _public_url) = client
         .register_http_tunnel(Some("hello"))
@@ -81,8 +81,8 @@ async fn http_tunnel_proxies_hello_world() {
     tokio::spawn(async move {
         loop {
             let conn_id = match client.wait_new_connection().await {
-                Ok(id)  => id,
-                Err(_)  => break,
+                Ok(id) => id,
+                Err(_) => break,
             };
             inject_proxy(&core_clone, conn_id, local_addr).await;
         }
@@ -94,7 +94,7 @@ async fn http_tunnel_proxies_hello_world() {
     // 6. Make an HTTPS request to the tunnel.
     //    The Host header carries the subdomain that the edge uses for routing.
     let https_url = format!("https://127.0.0.1:{}/", server.https_port);
-    let host      = format!("{subdomain}.{}", server.domain);
+    let host = format!("{subdomain}.{}", server.domain);
 
     let resp = insecure_http_client()
         .get(&https_url)
@@ -112,11 +112,10 @@ async fn http_tunnel_proxies_hello_world() {
     //    Allow a short propagation delay (capture is async).
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM captured_requests")
-            .fetch_one(&server.pool)
-            .await
-            .expect("DB query");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM captured_requests")
+        .fetch_one(&server.pool)
+        .await
+        .expect("DB query");
 
     assert_eq!(count, 1, "expected 1 captured request, got {count}");
 }
@@ -182,7 +181,10 @@ async fn duplicate_subdomain_returns_tunnel_error() {
         .await
         .expect_err("duplicate should fail");
 
-    assert!(err.contains("TunnelError"), "expected TunnelError; got: {err}");
+    assert!(
+        err.contains("TunnelError"),
+        "expected TunnelError; got: {err}"
+    );
 }
 
 // ── multiple requests through the same tunnel ─────────────────────────────────
@@ -193,7 +195,7 @@ async fn multiple_requests_through_tunnel() {
 
     let (local_addr, _hello_shutdown) = start_hello_world_server().await;
     let server = TestServer::start().await;
-    let core   = Arc::clone(&server.core);
+    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
     let (_, subdomain, _) = client
@@ -204,7 +206,9 @@ async fn multiple_requests_through_tunnel() {
     let core_clone = Arc::clone(&core);
     tokio::spawn(async move {
         loop {
-            let Ok(conn_id) = client.wait_new_connection().await else { break };
+            let Ok(conn_id) = client.wait_new_connection().await else {
+                break;
+            };
             inject_proxy(&core_clone, conn_id, local_addr).await;
         }
     });
@@ -212,7 +216,7 @@ async fn multiple_requests_through_tunnel() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
     let http_client = insecure_http_client();
-    let url  = format!("https://127.0.0.1:{}/", server.https_port);
+    let url = format!("https://127.0.0.1:{}/", server.https_port);
     let host = format!("{subdomain}.localhost");
 
     for i in 0..3 {

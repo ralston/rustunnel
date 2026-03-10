@@ -28,7 +28,9 @@ pub struct ServerSection {
     pub dashboard_port: u16,
 }
 
-fn default_dashboard_port() -> u16 { 4040 }
+fn default_dashboard_port() -> u16 {
+    4040
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TlsSection {
@@ -38,7 +40,6 @@ pub struct TlsSection {
     pub key_path: String,
 
     // ── ACME / Let's Encrypt ─────────────────────────────────────────────────
-
     /// Enable automatic certificate issuance and renewal via ACME.
     #[serde(default)]
     pub acme_enabled: bool,
