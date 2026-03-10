@@ -1,0 +1,32 @@
+[workspace]
+members = [
+    "crates/rustunnel-protocol",
+    "crates/rustunnel-server",
+    "crates/rustunnel-client",
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+dashmap = "6"
+parking_lot = "0.12"
+toml = "0.8"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+yamux = "0.13"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server", "client"] }
+http-body-util = "0.1"
+bytes = "1"
+tower = { version = "0.4", features = ["timeout", "util"] }
+rustunnel-protocol = { path = "crates/rustunnel-protocol" }

@@ -1,0 +1,385 @@
+//! Per-client WebSocket session handler.
+//!
+//! Lifecycle
+//! ---------
+//! 1. Auth handshake (5 s timeout).
+//! 2. Main select loop: frames from the WebSocket OR control messages from
+//!    the router (NewConnection, Shutdown).
+//! 3. Heartbeat: Ping every 30 s; drop session if Pong not received in 10 s.
+//! 4. Cleanup: `core.remove_session` on any exit path.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{interval, timeout, Instant};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
+use uuid::Uuid;
+
+use rustunnel_protocol::{decode_frame, encode_frame, ControlFrame, TunnelProtocol};
+
+use crate::config::ServerConfig;
+use crate::control::mux::MuxSession;
+use crate::core::{ControlMessage, TunnelCore};
+use crate::error::{Error, Result};
+
+// ── constants ─────────────────────────────────────────────────────────────────
+
+const AUTH_TIMEOUT:      Duration = Duration::from_secs(5);
+const PING_INTERVAL:     Duration = Duration::from_secs(30);
+const PONG_DEADLINE:     Duration = Duration::from_secs(10);
+const CTRL_CHANNEL_SIZE: usize   = 64;
+
+// ── public entry point ────────────────────────────────────────────────────────
+
+pub async fn handle_session<S>(
+    ws:        WebSocketStream<S>,
+    peer_addr: SocketAddr,
+    core:      Arc<TunnelCore>,
+    config:    Arc<ServerConfig>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    match run_session(ws, peer_addr, &core, &config).await {
+        Ok(()) => tracing::info!(%peer_addr, "session ended cleanly"),
+        Err(e) => tracing::warn!(%peer_addr, "session error: {e}"),
+    }
+}
+
+// ── session driver ────────────────────────────────────────────────────────────
+
+async fn run_session<S>(
+    ws:        WebSocketStream<S>,
+    peer_addr: SocketAddr,
+    core:      &Arc<TunnelCore>,
+    config:    &Arc<ServerConfig>,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    // Create the control channel up-front so we only register_session once.
+    let (ctrl_tx, mut ctrl_rx) = mpsc::channel::<ControlMessage>(CTRL_CHANNEL_SIZE);
+
+    // Auth.
+    let (mut ws, session_id) =
+        auth_handshake(ws, peer_addr, core, config, ctrl_tx).await?;
+
+    tracing::info!(%peer_addr, %session_id, "session authenticated");
+
+    // Heartbeat channels.
+    let (ping_out_tx, mut ping_out_rx) = mpsc::channel::<u64>(4);
+    let (pong_in_tx, pong_in_rx)       = mpsc::channel::<u64>(4);
+    let (hb_stop_tx, hb_stop_rx)       = oneshot::channel::<()>();
+
+    tokio::spawn(heartbeat_task(ping_out_tx, pong_in_rx, hb_stop_rx, session_id));
+
+    let mut mux = MuxSession::start_detached();
+
+    let result = main_loop(
+        &mut ws,
+        &mut ctrl_rx,
+        &mut ping_out_rx,
+        pong_in_tx,
+        session_id,
+        core,
+        config,
+        &mut mux,  // passed into handle_client_message for DataStreamOpen
+    ).await;
+
+    let _ = hb_stop_tx.send(());
+    core.remove_session(&session_id);
+    tracing::debug!(%session_id, "session removed");
+
+    result
+}
+
+// ── auth handshake ────────────────────────────────────────────────────────────
+
+async fn auth_handshake<S>(
+    mut ws:    WebSocketStream<S>,
+    peer_addr: SocketAddr,
+    core:      &Arc<TunnelCore>,
+    config:    &Arc<ServerConfig>,
+    ctrl_tx:   mpsc::Sender<ControlMessage>,
+) -> Result<(WebSocketStream<S>, Uuid)>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let raw = timeout(AUTH_TIMEOUT, ws.next())
+        .await
+        .map_err(|_| Error::Auth("auth timeout".into()))?
+        .ok_or_else(|| Error::Auth("connection closed before auth".into()))?
+        .map_err(|e| Error::Auth(e.to_string()))?;
+
+    let frame = parse_binary(raw)?;
+
+    let (token, _client_version) = match frame {
+        ControlFrame::Auth { token, client_version } => (token, client_version),
+        other => {
+            let _ = send_frame(&mut ws, &ControlFrame::AuthError {
+                message: "expected Auth frame".into(),
+            }).await;
+            return Err(Error::Auth(format!("unexpected frame: {other:?}")));
+        }
+    };
+
+    let authed = !config.auth.require_auth || token == config.auth.admin_token;
+    if !authed {
+        let _ = send_frame(&mut ws, &ControlFrame::AuthError {
+            message: "invalid token".into(),
+        }).await;
+        return Err(Error::Auth("invalid token".into()));
+    }
+
+    let session_id = core.register_session(peer_addr, token, ctrl_tx);
+
+    send_frame(&mut ws, &ControlFrame::AuthOk {
+        session_id,
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+    }).await?;
+
+    Ok((ws, session_id))
+}
+
+// ── main loop ─────────────────────────────────────────────────────────────────
+
+async fn main_loop<S>(
+    ws:          &mut WebSocketStream<S>,
+    ctrl_rx:     &mut mpsc::Receiver<ControlMessage>,
+    ping_out_rx: &mut mpsc::Receiver<u64>,
+    pong_in_tx:  mpsc::Sender<u64>,
+    session_id:  Uuid,
+    core:        &Arc<TunnelCore>,
+    config:      &Arc<ServerConfig>,
+    mux:         &mut MuxSession,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        tokio::select! {
+            // Outbound Ping queued by the heartbeat task.
+            ts = ping_out_rx.recv() => {
+                match ts {
+                    None => return Ok(()),
+                    Some(timestamp) => {
+                        send_frame(ws, &ControlFrame::Ping { timestamp }).await?;
+                        tracing::trace!(%session_id, timestamp, "ping sent");
+                    }
+                }
+            }
+
+            // Inbound WebSocket frame.
+            msg = ws.next() => {
+                match msg {
+                    None => {
+                        tracing::debug!(%session_id, "peer closed WebSocket");
+                        return Ok(());
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(%session_id, "ws error: {e}");
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe, e.to_string())));
+                    }
+                    Some(Ok(msg)) => {
+                        handle_client_message(msg, ws, session_id, core, config, &pong_in_tx, mux).await?;
+                    }
+                }
+            }
+
+            // Control message from the router.
+            ctrl = ctrl_rx.recv() => {
+                match ctrl {
+                    None | Some(ControlMessage::Shutdown) => {
+                        tracing::info!(%session_id, "shutdown");
+                        let _ = ws.close(None).await;
+                        return Ok(());
+                    }
+                    Some(ControlMessage::NewConnection { conn_id, client_addr, protocol }) => {
+                        tracing::debug!(%session_id, %conn_id, %client_addr, "fwd NewConnection");
+                        send_frame(ws, &ControlFrame::NewConnection {
+                            conn_id,
+                            client_addr: client_addr.to_string(),
+                            protocol,
+                        }).await?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── frame dispatch ────────────────────────────────────────────────────────────
+
+async fn handle_client_message<S>(
+    msg:        Message,
+    ws:         &mut WebSocketStream<S>,
+    session_id: Uuid,
+    core:       &Arc<TunnelCore>,
+    config:     &Arc<ServerConfig>,
+    pong_in_tx: &mpsc::Sender<u64>,
+    mux:        &mut MuxSession,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let frame = match parse_binary(msg) {
+        Ok(f) => f,
+        Err(_) => return Ok(()),
+    };
+
+    match frame {
+        ControlFrame::RegisterTunnel { request_id, protocol, subdomain, local_addr: _ } => {
+            tracing::debug!(%session_id, %request_id, ?protocol, "register tunnel");
+            match &protocol {
+                TunnelProtocol::Http | TunnelProtocol::Https => {
+                    match core.register_http_tunnel(&session_id, subdomain, protocol.clone()) {
+                        Ok((tunnel_id, sub)) => {
+                            let scheme = if protocol == TunnelProtocol::Https { "https" } else { "http" };
+                            let public_url = format!("{scheme}://{}.{}", sub, config.server.domain);
+                            send_frame(ws, &ControlFrame::TunnelRegistered {
+                                request_id, tunnel_id, public_url, assigned_port: None,
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_frame(ws, &ControlFrame::TunnelError {
+                                request_id, message: e.to_string(),
+                            }).await?;
+                        }
+                    }
+                }
+                TunnelProtocol::Tcp => {
+                    match core.register_tcp_tunnel(&session_id) {
+                        Ok((tunnel_id, port)) => {
+                            let public_url = format!("tcp://{}:{port}", config.server.domain);
+                            send_frame(ws, &ControlFrame::TunnelRegistered {
+                                request_id, tunnel_id, public_url, assigned_port: Some(port),
+                            }).await?;
+                        }
+                        Err(e) => {
+                            send_frame(ws, &ControlFrame::TunnelError {
+                                request_id, message: e.to_string(),
+                            }).await?;
+                        }
+                    }
+                }
+            }
+        }
+
+        ControlFrame::UnregisterTunnel { tunnel_id } => {
+            tracing::debug!(%session_id, %tunnel_id, "unregister tunnel");
+            core.remove_tunnel(&tunnel_id);
+        }
+
+        ControlFrame::Ping { timestamp } => {
+            send_frame(ws, &ControlFrame::Pong { timestamp }).await?;
+        }
+
+        ControlFrame::Pong { timestamp } => {
+            tracing::trace!(%session_id, timestamp, "pong");
+            let _ = pong_in_tx.try_send(timestamp);
+        }
+
+        ControlFrame::DataStreamOpen { conn_id } => {
+            tracing::debug!(%session_id, %conn_id, "data stream opened by client");
+            // Accept the next inbound yamux stream the client opened, then
+            // hand it to the edge task that is waiting on this conn_id.
+            match mux.next_inbound().await {
+                Some(Ok(stream)) => {
+                    if !core.resolve_pending_conn(&conn_id, stream) {
+                        tracing::warn!(%conn_id, "no pending edge task waiting for this conn_id");
+                    }
+                }
+                Some(Err(e)) => {
+                    tracing::warn!(%session_id, %conn_id, "yamux error accepting data stream: {e}");
+                }
+                None => {
+                    tracing::warn!(%session_id, "yamux session closed");
+                    return Err(Error::Mux("yamux session closed".into()));
+                }
+            }
+        }
+
+        other => {
+            tracing::warn!(%session_id, ?other, "unexpected frame — ignored");
+        }
+    }
+    Ok(())
+}
+
+// ── heartbeat task ────────────────────────────────────────────────────────────
+
+async fn heartbeat_task(
+    ping_out_tx:    mpsc::Sender<u64>,
+    mut pong_in_rx: mpsc::Receiver<u64>,
+    mut stop:       oneshot::Receiver<()>,
+    session_id:     Uuid,
+) {
+    let mut ticker = interval(PING_INTERVAL);
+    ticker.tick().await; // skip immediate first tick
+
+    let mut pending: Option<Instant> = None;
+
+    loop {
+        tokio::select! {
+            _ = &mut stop => break,
+
+            _ = ticker.tick() => {
+                if let Some(sent_at) = pending {
+                    if sent_at.elapsed() > PONG_DEADLINE {
+                        tracing::warn!(%session_id, "heartbeat timeout");
+                        break;
+                    }
+                }
+                let ts = now_ms();
+                if ping_out_tx.send(ts).await.is_err() {
+                    break;
+                }
+                pending = Some(Instant::now());
+            }
+
+            pong = pong_in_rx.recv() => {
+                match pong {
+                    None => break,
+                    Some(_) => {
+                        pending = None;
+                        tracing::trace!(%session_id, "heartbeat ok");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+async fn send_frame<S>(ws: &mut WebSocketStream<S>, frame: &ControlFrame) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let bytes = encode_frame(frame);
+    ws.send(Message::Binary(bytes.into()))
+        .await
+        .map_err(|e| Error::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe, e.to_string())))
+}
+
+fn parse_binary(msg: Message) -> Result<ControlFrame> {
+    match msg {
+        Message::Binary(data) => decode_frame(&data).map_err(Error::Protocol),
+        other => Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("expected binary frame, got {other:?}"),
+        ))),
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
