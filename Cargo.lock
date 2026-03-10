@@ -2181,6 +2181,7 @@ dependencies = [
  "axum 0.7.9",
  "bytes",
  "chrono",
+ "clap",
  "dashmap",
  "futures-util",
  "hex",
