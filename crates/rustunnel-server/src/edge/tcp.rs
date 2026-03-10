@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::{debug, info, warn};
@@ -40,16 +41,23 @@ const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 /// Watch for TCP tunnel lifecycle events and manage per-port listeners.
 ///
 /// This function runs forever; spawn it as a background task.
+///
+/// Per-port listener tasks are tracked in a `JoinSet`.  When this future is
+/// dropped (e.g. via `AbortHandle::abort()`), the `JoinSet` is dropped with
+/// it, which automatically aborts all per-port tasks — releasing their bound
+/// TCP ports immediately.
 pub async fn run_tcp_edge(core: Arc<TunnelCore>) {
-    let mut events   = core.subscribe_tcp_events();
-    // AbortHandle per active port.
+    let mut events = core.subscribe_tcp_events();
+    // JoinSet owns per-port listener tasks; dropping it aborts them all.
+    let mut join_set: JoinSet<()> = JoinSet::new();
+    // AbortHandle per active port for targeted removal.
     let mut handles: HashMap<u16, tokio::task::AbortHandle> = HashMap::new();
 
     // Bootstrap: start listeners for any TCP tunnels that are already active
     // (e.g. when the edge is restarted while tunnels are registered).
     for entry in core.tcp_routes.iter() {
         let port = *entry.key();
-        let handle = spawn_port_listener(port, core.clone());
+        let handle = spawn_port_listener(port, core.clone(), &mut join_set);
         handles.insert(port, handle);
     }
 
@@ -59,7 +67,7 @@ pub async fn run_tcp_edge(core: Arc<TunnelCore>) {
         match events.recv().await {
             Ok(TcpTunnelEvent::Registered { tunnel_id, port }) => {
                 info!(%tunnel_id, port, "starting TCP listener");
-                let handle = spawn_port_listener(port, core.clone());
+                let handle = spawn_port_listener(port, core.clone(), &mut join_set);
                 if let Some(old) = handles.insert(port, handle) {
                     old.abort(); // shouldn't happen, but be safe
                 }
@@ -73,7 +81,7 @@ pub async fn run_tcp_edge(core: Arc<TunnelCore>) {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                 warn!("TCP event channel lagged by {n} events — resyncing");
                 // Re-sync: compare current state with our handles map.
-                resync_listeners(&mut handles, &core);
+                resync_listeners(&mut handles, &core, &mut join_set);
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 info!("TCP event channel closed — TCP edge manager exiting");
@@ -81,22 +89,21 @@ pub async fn run_tcp_edge(core: Arc<TunnelCore>) {
             }
         }
     }
-
-    // Stop all active listeners on exit.
-    for (_, handle) in handles.drain() {
-        handle.abort();
-    }
+    // JoinSet is dropped here, aborting all remaining per-port listeners.
 }
 
 // ── per-port listener ─────────────────────────────────────────────────────────
 
-fn spawn_port_listener(port: u16, core: Arc<TunnelCore>) -> tokio::task::AbortHandle {
-    tokio::spawn(async move {
+fn spawn_port_listener(
+    port:     u16,
+    core:     Arc<TunnelCore>,
+    join_set: &mut JoinSet<()>,
+) -> tokio::task::AbortHandle {
+    join_set.spawn(async move {
         if let Err(e) = port_listener(port, core).await {
             warn!(port, "TCP listener exited with error: {e}");
         }
     })
-    .abort_handle()
 }
 
 async fn port_listener(port: u16, core: Arc<TunnelCore>) -> Result<()> {
@@ -192,8 +199,9 @@ async fn proxy_tcp_connection(
 /// Compare the live `tcp_routes` in `core` against the map of running
 /// listener tasks, stopping stale ones and starting missing ones.
 fn resync_listeners(
-    handles: &mut HashMap<u16, tokio::task::AbortHandle>,
-    core:    &Arc<TunnelCore>,
+    handles:  &mut HashMap<u16, tokio::task::AbortHandle>,
+    core:     &Arc<TunnelCore>,
+    join_set: &mut JoinSet<()>,
 ) {
     // Collect currently active ports.
     let active: std::collections::HashSet<u16> =
@@ -212,7 +220,7 @@ fn resync_listeners(
     // Start listeners for ports we don't yet have.
     for port in &active {
         if !handles.contains_key(port) {
-            let handle = spawn_port_listener(*port, core.clone());
+            let handle = spawn_port_listener(*port, core.clone(), join_set);
             handles.insert(*port, handle);
         }
     }

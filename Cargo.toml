@@ -3,6 +3,7 @@ members = [
     "crates/rustunnel-protocol",
     "crates/rustunnel-server",
     "crates/rustunnel-client",
+    "tests",
 ]
 resolver = "2"
 
@@ -48,4 +49,5 @@ instant-acme = "0.7"
 rcgen = "0.13"
 arc-swap = "1"
 x509-parser = "0.16"
+tempfile = "3"
 rustunnel-protocol = { path = "crates/rustunnel-protocol" }
