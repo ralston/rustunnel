@@ -36,6 +36,38 @@ pub struct TlsSection {
     pub cert_path: String,
     /// Path to the TLS private-key file (PEM)
     pub key_path: String,
+
+    // ── ACME / Let's Encrypt ─────────────────────────────────────────────────
+
+    /// Enable automatic certificate issuance and renewal via ACME.
+    #[serde(default)]
+    pub acme_enabled: bool,
+
+    /// Contact email registered with the ACME CA.
+    #[serde(default)]
+    pub acme_email: String,
+
+    /// Use Let's Encrypt staging CA (for testing — avoids rate limits).
+    #[serde(default)]
+    pub acme_staging: bool,
+
+    /// Directory used to persist the ACME account key and credentials.
+    #[serde(default = "default_acme_account_dir")]
+    pub acme_account_dir: String,
+
+    /// Cloudflare API token with DNS:Edit permission.
+    /// Prefer supplying via `CLOUDFLARE_API_TOKEN` environment variable.
+    #[serde(default)]
+    pub cloudflare_api_token: String,
+
+    /// Cloudflare Zone ID for the domain.
+    /// Prefer supplying via `CLOUDFLARE_ZONE_ID` environment variable.
+    #[serde(default)]
+    pub cloudflare_zone_id: String,
+}
+
+fn default_acme_account_dir() -> String {
+    "/var/lib/rustunnel".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -104,6 +136,12 @@ impl Default for ServerConfig {
             tls: TlsSection {
                 cert_path: "cert.pem".to_string(),
                 key_path: "key.pem".to_string(),
+                acme_enabled: false,
+                acme_email: String::new(),
+                acme_staging: true,
+                acme_account_dir: "/tmp/rustunnel-test".to_string(),
+                cloudflare_api_token: String::new(),
+                cloudflare_zone_id: String::new(),
             },
             auth: AuthSection {
                 admin_token: "test-admin-token".to_string(),

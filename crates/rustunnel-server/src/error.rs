@@ -35,6 +35,12 @@ pub enum Error {
     #[error("http error: {0}")]
     Http(String),
 
+    #[error("tls error: {0}")]
+    Tls(String),
+
+    #[error("acme error: {0}")]
+    Acme(String),
+
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
 }

@@ -5,3 +5,4 @@ pub mod dashboard;
 pub mod db;
 pub mod edge;
 pub mod error;
+pub mod tls;

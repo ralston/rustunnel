@@ -43,3 +43,8 @@ hex = { workspace = true }
 chrono = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
+reqwest = { workspace = true }
+instant-acme = { workspace = true }
+rcgen = { workspace = true }
+arc-swap = { workspace = true }
+x509-parser = { workspace = true }
