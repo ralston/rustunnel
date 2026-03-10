@@ -1,0 +1,40 @@
+# Rust build output
+/target/
+**/target/
+
+# Cargo lock is committed for binaries, not libraries
+# (kept here since rustunnel-server is a binary workspace)
+
+# Editor and IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+/test-certs/
+/tmp/
+
+# Claude Code project memory (local only)
+.claude/
