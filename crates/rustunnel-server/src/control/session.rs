@@ -470,7 +470,7 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let bytes = encode_frame(frame);
-    ws.send(Message::Binary(bytes.into())).await.map_err(|e| {
+    ws.send(Message::Binary(bytes)).await.map_err(|e| {
         Error::Io(std::io::Error::new(
             std::io::ErrorKind::BrokenPipe,
             e.to_string(),

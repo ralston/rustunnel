@@ -2,7 +2,7 @@
 //!
 //! * Port 80  — plain HTTP, every request → 301 redirect to HTTPS.
 //! * Port 443 — TLS-terminated; requests are proxied through the tunnel
-//!              identified by the `Host` subdomain.
+//!   identified by the `Host` subdomain.
 //!
 //! Proxy flow for a normal request
 //! ────────────────────────────────

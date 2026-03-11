@@ -1,4 +1,5 @@
 //! Shared test helpers: TestServer + TestClient + yamux injection utilities.
+#![allow(dead_code)]
 //!
 //! # Architecture note — data plane
 //!
@@ -19,6 +20,7 @@ use futures_util::future::poll_fn;
 use futures_util::{SinkExt, StreamExt};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::ClientConfig;
+#[allow(unused_imports)]
 use rustls::ServerConfig as RustlsConfig;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -514,7 +516,7 @@ impl TestClient {
     pub async fn send(&mut self, frame: &ControlFrame) -> Result<(), String> {
         let bytes = encode_frame(frame);
         self.ws
-            .send(Message::Binary(bytes.into()))
+            .send(Message::Binary(bytes))
             .await
             .map_err(|e| format!("send: {e}"))
     }
@@ -565,9 +567,9 @@ impl TestClient {
 ///
 /// Returns `(edge_stream, proxy_rx)`:
 /// * `edge_stream` — inject into `core.resolve_pending_conn()`.
-/// * `proxy_rx`    — resolves to the proxy-side stream *after* the edge writes
-///                   its first byte; the proxy task awaits this before bridging
-///                   to the local service.
+/// * `proxy_rx` — resolves to the proxy-side stream *after* the edge writes
+///   its first byte; the proxy task awaits this before bridging
+///   to the local service.
 pub async fn make_yamux_pair() -> (yamux::Stream, tokio::sync::oneshot::Receiver<yamux::Stream>) {
     // Large buffer so a full HTTP response fits without backpressure.
     let (io_a, io_b) = tokio::io::duplex(2 * 1024 * 1024);

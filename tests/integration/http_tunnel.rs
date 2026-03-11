@@ -20,6 +20,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+#[allow(unused_imports)]
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;

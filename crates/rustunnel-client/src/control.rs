@@ -129,7 +129,7 @@ where
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let msg = Message::Binary(buf.to_vec().into());
+        let msg = Message::Binary(buf.to_vec());
         match Pin::new(&mut this.inner).poll_ready(cx) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Err(e)) => {
@@ -439,7 +439,7 @@ fn find_local_addr(
 
 async fn send_frame(ws: &mut CtrlWs, frame: &ControlFrame) -> Result<()> {
     let bytes = encode_frame(frame);
-    ws.send(Message::Binary(bytes.into()))
+    ws.send(Message::Binary(bytes))
         .await
         .map_err(|e| Error::Connection(e.to_string()))
 }

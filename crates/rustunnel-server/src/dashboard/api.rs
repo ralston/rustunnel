@@ -173,10 +173,9 @@ fn instant_to_iso(created: std::time::Instant) -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     // Format as RFC-3339 without pulling in chrono for this helper.
-    let dt = chrono::DateTime::from_timestamp(secs as i64, 0)
+    chrono::DateTime::from_timestamp(secs as i64, 0)
         .unwrap_or_default()
-        .to_rfc3339();
-    dt
+        .to_rfc3339()
 }
 
 async fn list_tunnels(headers: HeaderMap, State(state): State<ApiState>) -> impl IntoResponse {

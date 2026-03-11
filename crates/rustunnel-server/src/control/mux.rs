@@ -103,7 +103,7 @@ where
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let msg = Message::Binary(buf.to_vec().into());
+        let msg = Message::Binary(buf.to_vec());
 
         match Pin::new(&mut this.inner).poll_ready(cx) {
             Poll::Pending => return Poll::Pending,
