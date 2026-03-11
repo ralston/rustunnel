@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 // ── WsCompat ─────────────────────────────────────────────────────────────────
 
 /// Adapts a `WebSocketStream` into `futures::io::{AsyncRead, AsyncWrite}` so
-/// that yamux can operate on it.
+/// that yamux (and the data-plane bridge) can operate on it.
 ///
 /// Read path: binary WebSocket frames are treated as an ordered byte stream.
 /// Write path: bytes are wrapped in binary WebSocket frames.
@@ -135,28 +135,33 @@ where
 
 /// A running yamux session.
 ///
-/// In the current architecture the WebSocket carries **control frames** and a
-/// separate data connection (also opened by the client) carries multiplexed
-/// yamux streams.  `MuxSession` is therefore created in "detached" mode backed
-/// by an in-process loopback pair; once the real data transport arrives the
-/// session is replaced.
+/// Backed by an in-process loopback pair.  The `pipe_client` end is handed
+/// off to the data-plane bridge task once the client's `/_data/<session_id>`
+/// WebSocket arrives; that task copies bytes between the real data WebSocket
+/// and `pipe_client`, feeding yamux frames into the server-side `Connection`.
 pub struct MuxSession {
     pub(crate) conn: Connection<Compat<DuplexStream>>,
-    /// Keep the client half alive so the loopback pair stays open.
-    _peer: DuplexStream,
+    /// Client end of the loopback.  Taken by the data-plane bridge once ready.
+    pipe_client: Option<DuplexStream>,
 }
 
 impl MuxSession {
-    /// Create a MuxSession backed by an in-process loopback pair.
+    /// Create a `MuxSession` backed by an in-process loopback pair.
     ///
-    /// Used as a placeholder until a real data-plane transport is wired up.
+    /// Call [`take_pipe_client`] to retrieve the peer end so it can be
+    /// bridged to the real data WebSocket.
     pub fn start_detached() -> Self {
         let (server_side, client_side) = tokio::io::duplex(64 * 1024);
         let conn = Connection::new(server_side.compat(), yamux::Config::default(), Mode::Server);
         Self {
             conn,
-            _peer: client_side,
+            pipe_client: Some(client_side),
         }
+    }
+
+    /// Take the loopback peer end.  Returns `None` if already taken.
+    pub fn take_pipe_client(&mut self) -> Option<DuplexStream> {
+        self.pipe_client.take()
     }
 
     /// Poll for the next inbound stream from the remote peer.

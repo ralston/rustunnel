@@ -1,20 +1,26 @@
 //! Control-plane TCP listener.
 //!
 //! Accepts TCP connections, upgrades to TLS (tokio-rustls), then upgrades to
-//! WebSocket (tokio-tungstenite), and spawns a session handler for each.
+//! WebSocket (tokio-tungstenite), and routes each connection based on the
+//! HTTP request path:
+//!
+//! * `/_control`            → session handler (auth + tunnel control frames)
+//! * `/_data/<session_id>`  → data-plane bridge (yamux frames from the client)
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use tokio_rustls::TlsAcceptor;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_hdr_async;
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use uuid::Uuid;
 
 use rustls::ServerConfig as RustlsConfig;
 
 use crate::audit::AuditTx;
 use crate::config::ServerConfig;
-use crate::control::session::handle_session;
+use crate::control::session::{handle_data_connection, handle_session};
 use crate::core::TunnelCore;
 use crate::error::Result;
 use crate::net::bind_reuse;
@@ -22,8 +28,8 @@ use crate::net::bind_reuse;
 /// Start the control-plane listener.
 ///
 /// Binds `addr`, wraps accepted sockets in TLS (using the hot-swappable
-/// `tls_config` handle), upgrades them to WebSocket, and spawns a
-/// `handle_session` task for each connection.
+/// `tls_config` handle), upgrades them to WebSocket, and dispatches each
+/// connection to the correct handler based on the HTTP request path.
 ///
 /// `tls_config` is read on **every** inbound connection so that certificate
 /// renewals performed by [`crate::tls::CertManager`] are picked up
@@ -49,8 +55,6 @@ pub async fn run_control_plane(
 
         tracing::debug!(%peer_addr, "new TCP connection");
 
-        // Per-connection: snapshot the current rustls config so renewed certs
-        // take effect on the very next connection.
         let acceptor = TlsAcceptor::from(Arc::clone(&tls_config.load()));
         let core = core.clone();
         let config = config.clone();
@@ -67,17 +71,37 @@ pub async fn run_control_plane(
             };
             tracing::debug!(%peer_addr, "TLS handshake complete");
 
-            // WebSocket upgrade.
-            let ws_stream = match accept_async(tls_stream).await {
+            // WebSocket upgrade — capture the HTTP request path before completing.
+            let mut captured_path = String::new();
+            let ws_stream = match accept_hdr_async(tls_stream, |req: &Request, resp: Response| {
+                captured_path = req.uri().path().to_string();
+                Ok(resp)
+            })
+            .await
+            {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(%peer_addr, "WebSocket upgrade failed: {e}");
                     return;
                 }
             };
-            tracing::debug!(%peer_addr, "WebSocket upgrade complete");
+            tracing::debug!(%peer_addr, path = %captured_path, "WebSocket upgrade complete");
 
-            handle_session(ws_stream, peer_addr, core, config, audit_tx).await;
+            // Route based on path.
+            if captured_path == "/_control" {
+                handle_session(ws_stream, peer_addr, core, config, audit_tx).await;
+            } else if let Some(id_str) = captured_path.strip_prefix("/_data/") {
+                match Uuid::parse_str(id_str) {
+                    Ok(session_id) => {
+                        handle_data_connection(ws_stream, session_id, core).await;
+                    }
+                    Err(_) => {
+                        tracing::warn!(%peer_addr, "invalid session_id in data path: {id_str}");
+                    }
+                }
+            } else {
+                tracing::warn!(%peer_addr, path = %captured_path, "unknown WebSocket path — closing");
+            }
         });
     }
 }

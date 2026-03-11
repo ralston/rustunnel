@@ -3,13 +3,10 @@
 //!
 //! # Architecture note — data plane
 //!
-//! The server's `MuxSession::start_detached()` uses an in-process loopback;
-//! there is no `/_data/<session_id>` WebSocket endpoint on the server yet.
-//!
-//! For HTTP / TCP proxy tests we therefore *inject* yamux streams directly
-//! into `TunnelCore::resolve_pending_conn()`.  This is equivalent to what a
-//! real client would do over the data WebSocket, exercising the full proxy
-//! path without needing the missing server endpoint.
+//! The server now has a `/_data/<session_id>` WebSocket endpoint on the
+//! control port.  For HTTP / TCP proxy tests we still *inject* yamux streams
+//! directly into `TunnelCore::resolve_pending_conn()` to keep tests fast and
+//! self-contained (no real WebSocket round-trip needed).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -382,7 +379,7 @@ pub struct TestClient {
 impl TestClient {
     /// Connect and authenticate with `token`.
     pub async fn connect_with_token(server: &TestServer, token: &str) -> Result<Self, String> {
-        let url = format!("wss://127.0.0.1:{}/", server.control_port);
+        let url = format!("wss://127.0.0.1:{}/_control", server.control_port);
 
         let connector = Connector::Rustls(insecure_client_tls());
         let (ws, _) =
@@ -424,7 +421,7 @@ impl TestClient {
         server: &TestServer,
         token: &str,
     ) -> Result<String, String> {
-        let url = format!("wss://127.0.0.1:{}/", server.control_port);
+        let url = format!("wss://127.0.0.1:{}/_control", server.control_port);
         let connector = Connector::Rustls(insecure_client_tls());
         let (ws, _) =
             tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))

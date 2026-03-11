@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use parking_lot::RwLock;
+use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, Semaphore};
 use uuid::Uuid;
 
@@ -69,6 +70,9 @@ pub struct SessionInfo {
     pub connected_at: Instant,
     /// Updated on every Ping/Pong exchange.
     pub last_heartbeat: RwLock<Instant>,
+    /// Loopback pipe endpoint stored here until the `/_data/<session_id>`
+    /// WebSocket connection arrives and takes it for bridging.
+    pub data_pipe: Option<DuplexStream>,
 }
 
 impl SessionInfo {
@@ -85,6 +89,7 @@ impl SessionInfo {
             tunnels: Vec::new(),
             connected_at: now,
             last_heartbeat: RwLock::new(now),
+            data_pipe: None,
         }
     }
 }

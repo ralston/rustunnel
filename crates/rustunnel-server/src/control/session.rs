@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, timeout, Instant};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
 
 use rustunnel_protocol::{decode_frame, encode_frame, ControlFrame, TunnelProtocol};
@@ -97,6 +98,12 @@ where
     ));
 
     let mut mux = MuxSession::start_detached();
+
+    // Store the loopback peer end so the data-plane bridge task can pick it
+    // up when the client's /_data/<session_id> WebSocket arrives.
+    if let Some(pipe) = mux.take_pipe_client() {
+        core.set_data_pipe(&session_id, pipe);
+    }
 
     let ctx = SessionCtx {
         session_id,
@@ -461,6 +468,52 @@ async fn heartbeat_task(
             }
         }
     }
+}
+
+// ── data-plane bridge ─────────────────────────────────────────────────────────
+
+/// Bridge the client's data WebSocket to the session's loopback pipe.
+///
+/// The yamux `Connection` inside `MuxSession` is backed by one end of an
+/// in-process `tokio::io::duplex` pair.  This function takes the other
+/// (client) end of that pair and bidirectionally copies bytes between it and
+/// the real data WebSocket, making yamux frames from the remote client flow
+/// transparently into the server-side yamux `Connection`.
+pub async fn handle_data_connection<S>(
+    ws: WebSocketStream<S>,
+    session_id: uuid::Uuid,
+    core: Arc<TunnelCore>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    // Retrieve the loopback pipe end that `run_session` stored after creating
+    // the `MuxSession`.  A brief retry loop handles the unlikely race where
+    // the data WebSocket arrives before `run_session` has called `set_data_pipe`.
+    let mut pipe = None;
+    for _ in 0..40 {
+        pipe = core.take_data_pipe(&session_id);
+        if pipe.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let Some(mut pipe) = pipe else {
+        tracing::warn!(%session_id, "data connection arrived but no pipe found (session unknown?)");
+        return;
+    };
+
+    tracing::info!(%session_id, "data WebSocket connected, bridging to yamux session");
+
+    // Convert the WebSocket (message-oriented) to a byte-stream then to
+    // tokio AsyncRead+AsyncWrite, then copy bidirectionally with the pipe.
+    let mut ws_bytes = crate::control::mux::WsCompat::new(ws).compat();
+
+    if let Err(e) = tokio::io::copy_bidirectional(&mut ws_bytes, &mut pipe).await {
+        tracing::debug!(%session_id, "data bridge closed: {e}");
+    }
+
+    tracing::debug!(%session_id, "data WebSocket bridge ended");
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

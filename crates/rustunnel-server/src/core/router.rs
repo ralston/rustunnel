@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use tokio::io::DuplexStream;
 use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use uuid::Uuid;
 use yamux::Stream as YamuxStream;
@@ -113,6 +114,24 @@ impl TunnelCore {
     /// Subscribe to TCP tunnel lifecycle events.
     pub fn subscribe_tcp_events(&self) -> broadcast::Receiver<TcpTunnelEvent> {
         self.tcp_events.subscribe()
+    }
+
+    // ── data-plane pipe handoff ───────────────────────────────────────────────
+
+    /// Store the loopback pipe client end in the session so the data-plane
+    /// bridge task can retrieve it when the `/_data/<session_id>` WS arrives.
+    pub fn set_data_pipe(&self, session_id: &Uuid, pipe: DuplexStream) {
+        if let Some(mut s) = self.sessions.get_mut(session_id) {
+            s.data_pipe = Some(pipe);
+        }
+    }
+
+    /// Take the loopback pipe client end out of the session.
+    /// Returns `None` if the session is unknown or the pipe was already taken.
+    pub fn take_data_pipe(&self, session_id: &Uuid) -> Option<DuplexStream> {
+        self.sessions
+            .get_mut(session_id)
+            .and_then(|mut s| s.data_pipe.take())
     }
 
     // ── session management ────────────────────────────────────────────────────
