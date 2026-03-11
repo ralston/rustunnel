@@ -606,11 +606,9 @@ pub async fn make_yamux_pair() -> (yamux::Stream, tokio::sync::oneshot::Receiver
     tokio::spawn(async move {
         let mut conn = Connection::new(io_a.compat(), YamuxConfig::default(), Mode::Client);
         // This await returns only after the server side sends DATA+SYN.
-        match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
-            Some(Ok(stream)) => {
-                let _ = proxy_tx.send(stream);
-            }
-            _ => {} // connection closed before a stream arrived
+        // connection closed before a stream arrived → ignore
+        if let Some(Ok(stream)) = poll_fn(|cx| conn.poll_next_inbound(cx)).await {
+            let _ = proxy_tx.send(stream);
         }
         // Keep driving for subsequent data frames.
         loop {
