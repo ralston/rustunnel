@@ -423,8 +423,11 @@ ufw allow 20000:20099/tcp comment "rustunnel TCP tunnels"
 ### 9 — Verify the server is running
 
 ```bash
-# Health check
-curl -s http://localhost:8443/health
+# Health check — use dashboard_port from server.toml (default 8443 in production)
+curl http://localhost:8443/api/status
+
+# Confirm which ports the process is actually bound to
+ss -tlnp | grep rustunnel-serve
 
 # Startup banner is visible in the logs
 journalctl -u rustunnel.service --no-pager | tail -30
@@ -432,6 +435,10 @@ journalctl -u rustunnel.service --no-pager | tail -30
 # Prometheus metrics
 curl -s http://localhost:9090/metrics
 ```
+
+> **Port reminder**: port 4040 is the control-plane WebSocket (clients connect here),
+> not the dashboard. Hitting it with plain HTTP returns `HTTP/0.9` which is expected.
+> The dashboard is on `dashboard_port` — check your `server.toml` if unsure.
 
 ---
 
