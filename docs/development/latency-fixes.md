@@ -66,14 +66,15 @@ Source analysis: [latency-investigation.md](./latency-investigation.md)
 ## Phase 3 — Data Path Cleanup
 
 **Goal**: Remove unnecessary indirection in the data plane; decouple driver serialisation.
-**Commit**: ⬜
+**Commit**: ✅
 
-### Fix 3a — Decouple server yamux driver: spawn per-stream write tasks ⬜
+### Fix 3a — Decouple server yamux driver: spawn per-stream write tasks ✅
 
 - **File**: `crates/rustunnel-server/src/control/session.rs`
 - **Function**: yamux driver task (`tokio::spawn` block)
-- **Change**: After `poll_new_outbound`, spawn a separate task for `write_all(conn_id)` + `flush`. The driver loop returns immediately to `poll_next_inbound`, so yamux window updates and ACKs from the client are not blocked.
+- **Change**: After `poll_new_outbound`, spawn a separate task for `write_all(conn_id)` + `flush` + `resolve_pending_conn`. The driver loop returns immediately to `poll_next_inbound`, so yamux window updates and ACKs from the client are not blocked.
 - **Impact**: Under concurrent requests, the driver no longer serialises stream-open operations. The main driver loop stays responsive for yamux flow control.
+- **Why it's safe**: yamux streams communicate with the Connection via an internal mpsc channel. `write_all` + `flush` queue frames (instant) rather than write to the network. The Connection drains them on the next `poll_next_inbound` call.
 
 ### Fix 3b — Eliminate duplex pipe (future) ⬜
 

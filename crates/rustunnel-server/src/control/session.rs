@@ -129,18 +129,28 @@ where
                     let conn_id = match req { None => break, Some(id) => id };
                     match poll_fn(|cx| conn.poll_new_outbound(cx)).await {
                         Ok(mut stream) => {
-                            // Writing the conn_id bytes immediately forces yamux
-                            // to emit a SYN + DATA frame, which the driver task's
-                            // next poll_next_inbound call will flush to the pipe.
-                            if stream.write_all(conn_id.as_bytes()).await.is_err()
-                                || stream.flush().await.is_err()
-                            {
-                                tracing::warn!(%conn_id, "failed to write/flush yamux stream");
-                                continue;
-                            }
-                            if !core_for_driver.resolve_pending_conn(&conn_id, stream) {
-                                tracing::warn!(%conn_id, "no edge task waiting for this conn_id");
-                            }
+                            // Spawn a separate task to write the conn_id bytes and
+                            // hand the stream to the waiting edge task. This returns
+                            // the driver loop to poll_next_inbound immediately so
+                            // yamux flow-control frames are not blocked by the write.
+                            //
+                            // yamux streams communicate with the Connection via an
+                            // internal mpsc channel, so write_all + flush complete
+                            // quickly (they queue frames rather than write to the
+                            // network). The Connection task drains them on the next
+                            // poll_next_inbound call.
+                            let core = Arc::clone(&core_for_driver);
+                            tokio::spawn(async move {
+                                if stream.write_all(conn_id.as_bytes()).await.is_err()
+                                    || stream.flush().await.is_err()
+                                {
+                                    tracing::warn!(%conn_id, "failed to write/flush yamux stream");
+                                    return;
+                                }
+                                if !core.resolve_pending_conn(&conn_id, stream) {
+                                    tracing::warn!(%conn_id, "no edge task waiting for this conn_id");
+                                }
+                            });
                         }
                         Err(e) => tracing::warn!(%conn_id, "yamux open_stream: {e}"),
                     }
