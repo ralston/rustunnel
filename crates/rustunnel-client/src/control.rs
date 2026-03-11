@@ -28,6 +28,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -36,8 +37,11 @@ use futures_util::io::{AsyncRead, AsyncWrite};
 use futures_util::sink::Sink;
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use yamux::{Connection, Mode};
@@ -54,6 +58,59 @@ use crate::proxy;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PONG_DEADLINE: Duration = Duration::from_secs(10);
+
+// ── insecure TLS (local dev only) ─────────────────────────────────────────────
+
+/// A `ServerCertVerifier` that accepts any certificate.
+/// **Never use this in production.**
+#[derive(Debug)]
+struct NoCertVerifier;
+
+impl ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Build a `tokio_tungstenite::Connector` that skips certificate verification.
+fn insecure_connector() -> Connector {
+    let tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+        .with_no_client_auth();
+    Connector::Rustls(Arc::new(tls_config))
+}
 
 // ── WsCompat — WebSocket ↔ futures::io bridge (mirrors server/control/mux.rs) ─
 
@@ -172,9 +229,18 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
 
     // 1. Control WebSocket —————————————————————————————————————————————————
     let ctrl_url = format!("wss://{}/_control", config.server);
-    let (mut ctrl_ws, _) = tokio_tungstenite::connect_async(&ctrl_url)
+    let (mut ctrl_ws, _) = if config.insecure {
+        tokio_tungstenite::connect_async_tls_with_config(
+            &ctrl_url,
+            None,
+            false,
+            Some(insecure_connector()),
+        )
         .await
-        .map_err(|e| Error::Connection(format!("control WS: {e}")))?;
+    } else {
+        tokio_tungstenite::connect_async(&ctrl_url).await
+    }
+    .map_err(|e| Error::Connection(format!("control WS: {e}")))?;
 
     sp.set_message("Authenticating…");
 
@@ -254,7 +320,8 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
     // NOTE: The server must implement a `/_data/<session_id>` WebSocket
     // endpoint for this to succeed.  If it is unavailable, data proxying is
     // skipped but the control loop still runs.
-    let mut data_conn: Option<DataConn> = connect_data_ws(&config.server, session_id).await;
+    let mut data_conn: Option<DataConn> =
+        connect_data_ws(&config.server, session_id, config.insecure).await;
 
     if data_conn.is_none() {
         warn!(
@@ -390,9 +457,20 @@ async fn main_loop(
 
 // ── data connection ───────────────────────────────────────────────────────────
 
-async fn connect_data_ws(server: &str, session_id: Uuid) -> Option<DataConn> {
+async fn connect_data_ws(server: &str, session_id: Uuid, insecure: bool) -> Option<DataConn> {
     let url = format!("wss://{}/_data/{}", server, session_id);
-    match tokio_tungstenite::connect_async(&url).await {
+    let result = if insecure {
+        tokio_tungstenite::connect_async_tls_with_config(
+            &url,
+            None,
+            false,
+            Some(insecure_connector()),
+        )
+        .await
+    } else {
+        tokio_tungstenite::connect_async(&url).await
+    };
+    match result {
         Ok((ws, _)) => {
             let compat = WsCompat::new(ws);
             let conn = Connection::new(compat, yamux::Config::default(), Mode::Client);

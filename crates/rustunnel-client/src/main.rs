@@ -73,6 +73,10 @@ struct TunnelArgs {
     /// Disable automatic reconnection on failure
     #[arg(long)]
     no_reconnect: bool,
+
+    /// Skip TLS certificate verification (local dev only — do not use in production)
+    #[arg(long)]
+    insecure: bool,
 }
 
 #[derive(Args)]
@@ -137,7 +141,7 @@ async fn run(cli: Cli) -> error::Result<()> {
 
 async fn run_tunnel(proto: &str, args: TunnelArgs) -> error::Result<()> {
     let mut cfg = ClientConfig::load_default()?;
-    cfg.apply_overrides(args.server, args.token);
+    cfg.apply_overrides(args.server, args.token, args.insecure);
     cfg.validate()?;
 
     let tunnels = vec![TunnelDef::from_cli(

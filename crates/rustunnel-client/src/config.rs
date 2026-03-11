@@ -21,6 +21,10 @@ pub struct ClientConfig {
     /// Auth token sent in the `Auth` control frame.
     pub auth_token: Option<String>,
 
+    /// Skip TLS certificate verification (for local development only).
+    #[serde(default)]
+    pub insecure: bool,
+
     /// Named tunnel definitions (used by `rustunnel start`).
     #[serde(default)]
     pub tunnels: HashMap<String, TunnelDef>,
@@ -82,14 +86,22 @@ impl ClientConfig {
         serde_yaml::from_str(&raw).map_err(|e| Error::Config(format!("invalid config YAML: {e}")))
     }
 
-    /// Apply CLI overrides: if `server` / `auth_token` are provided they
-    /// replace the config-file values.
-    pub fn apply_overrides(&mut self, server: Option<String>, auth_token: Option<String>) {
+    /// Apply CLI overrides: if `server` / `auth_token` / `insecure` are
+    /// provided they replace the config-file values.
+    pub fn apply_overrides(
+        &mut self,
+        server: Option<String>,
+        auth_token: Option<String>,
+        insecure: bool,
+    ) {
         if let Some(s) = server {
             self.server = s;
         }
         if let Some(t) = auth_token {
             self.auth_token = Some(t);
+        }
+        if insecure {
+            self.insecure = true;
         }
     }
 

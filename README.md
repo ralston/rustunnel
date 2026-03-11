@@ -158,13 +158,18 @@ With the server running, expose a local service (e.g. something on port 3000):
 # HTTP tunnel
 cargo run -p rustunnel-client -- http 3000 \
   --server localhost:4040 \
-  --token dev-secret-change-me
+  --token dev-secret-change-me \
+  --insecure
 
 # TCP tunnel
 cargo run -p rustunnel-client -- tcp 5432 \
   --server localhost:4040 \
-  --token dev-secret-change-me
+  --token dev-secret-change-me \
+  --insecure
 ```
+
+> `--insecure` skips TLS certificate verification. Required when using a
+> self-signed certificate locally. Never use this flag against a production server.
 
 The client will print a public URL, for example:
 ```
