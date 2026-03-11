@@ -32,18 +32,19 @@ use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::future::poll_fn;
-use futures_util::io::{AsyncRead, AsyncWrite};
+use futures_util::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use futures_util::sink::Sink;
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-use yamux::{Connection, Mode};
+use yamux::{Connection, Mode, Stream as YamuxStream};
 
 use rustunnel_protocol::{decode_frame, encode_frame, ControlFrame, TunnelProtocol};
 
@@ -316,17 +317,24 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
     sp.finish_and_clear();
 
     // 4. Data WebSocket (yamux) ————————————————————————————————————————————
-    // NOTE: The server must implement a `/_data/<session_id>` WebSocket
-    // endpoint for this to succeed.  If it is unavailable, data proxying is
-    // skipped but the control loop still runs.
-    let mut data_conn: Option<DataConn> =
+    let data_conn: Option<DataConn> =
         connect_data_ws(&config.server, session_id, config.insecure).await;
 
-    if data_conn.is_none() {
-        warn!(
-            "data WebSocket unavailable — proxy connections will be skipped \
-               until the server implements /_data/<session_id>"
-        );
+    // Spawn a background driver task that continuously polls the yamux
+    // connection (Mode::Server — accepts inbound streams opened by the server).
+    // It reads the 16-byte conn_id prefix the server writes into each stream,
+    // then forwards (conn_id, stream) pairs to the main loop via a channel.
+    //
+    // Keeping a clone of stream_tx alive prevents the channel from closing
+    // when/if the driver task exits early (e.g. yamux session reset), so the
+    // main loop's select arm blocks instead of spinning.
+    let (stream_tx, stream_rx) = mpsc::channel::<(Uuid, YamuxStream)>(16);
+    let _stream_tx_keep = stream_tx.clone();
+
+    if let Some(conn) = data_conn {
+        tokio::spawn(drive_client_mux(conn, stream_tx));
+    } else {
+        warn!("data WebSocket unavailable — proxy connections will be skipped");
     }
 
     // 5. Print startup display ————————————————————————————————————————————
@@ -342,14 +350,14 @@ pub async fn connect(config: &ClientConfig, tunnels: &[TunnelDef]) -> Result<()>
     display::print_startup_box(&display_tunnels);
 
     // 6. Main event loop ——————————————————————————————————————————————————
-    main_loop(&mut ctrl_ws, &mut data_conn, &registered).await
+    main_loop(&mut ctrl_ws, stream_rx, &registered).await
 }
 
 // ── main loop ─────────────────────────────────────────────────────────────────
 
 async fn main_loop(
     ctrl_ws: &mut CtrlWs,
-    data_conn: &mut Option<DataConn>,
+    mut stream_rx: mpsc::Receiver<(Uuid, YamuxStream)>,
     registered: &[(TunnelDef, String)],
 ) -> Result<()> {
     let mut ping_interval = tokio::time::interval(PING_INTERVAL);
@@ -357,6 +365,14 @@ async fn main_loop(
 
     let mut last_pong = tokio::time::Instant::now();
     let mut awaiting_pong = false;
+
+    // Pending maps to handle the two orderings of NewConnection vs stream:
+    //   pending_conns:   NewConnection arrived first  → wait for matching stream
+    //   pending_streams: stream arrived first         → wait for matching NewConnection
+    let mut pending_conns: std::collections::HashMap<Uuid, String> =
+        std::collections::HashMap::new();
+    let mut pending_streams: std::collections::HashMap<Uuid, YamuxStream> =
+        std::collections::HashMap::new();
 
     loop {
         tokio::select! {
@@ -379,6 +395,20 @@ async fn main_loop(
                 awaiting_pong = true;
             }
 
+            // ── Inbound yamux stream from background driver ───────────────
+            pair = stream_rx.recv() => {
+                if let Some((conn_id, stream)) = pair {
+                    if let Some(local_addr) = pending_conns.remove(&conn_id) {
+                        // NewConnection arrived earlier — proxy immediately.
+                        tokio::spawn(proxy::proxy_connection(stream, local_addr, conn_id));
+                    } else {
+                        // NewConnection hasn't arrived yet — stash the stream.
+                        debug!(%conn_id, "stream arrived before NewConnection — buffering");
+                        pending_streams.insert(conn_id, stream);
+                    }
+                }
+            }
+
             // ── Inbound control frame ─────────────────────────────────────
             msg = ctrl_ws.next() => {
                 match msg {
@@ -399,38 +429,23 @@ async fn main_loop(
                             ControlFrame::NewConnection { conn_id, client_addr, protocol } => {
                                 debug!(%conn_id, %client_addr, "new connection from server");
 
-                                let local_addr = find_local_addr(registered, &protocol);
-
-                                if let Some(ref mut conn) = data_conn {
-                                    // Open an outbound yamux stream for this connection.
-                                    match poll_fn(|cx| conn.poll_new_outbound(cx)).await {
-                                        Ok(stream) => {
-                                            // Notify the server AFTER opening the stream so
-                                            // `mux.next_inbound()` on the server side has a
-                                            // stream waiting.
-                                            if let Err(e) = send_frame(
-                                                ctrl_ws,
-                                                &ControlFrame::DataStreamOpen { conn_id },
-                                            ).await {
-                                                warn!(%conn_id, "send DataStreamOpen: {e}");
-                                                continue;
-                                            }
-
-                                            if let Some(addr) = local_addr {
-                                                tokio::spawn(proxy::proxy_connection(
-                                                    stream, addr, conn_id,
-                                                ));
-                                            } else {
-                                                warn!(%conn_id, ?protocol,
-                                                    "no local address configured for this protocol");
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(%conn_id, "yamux open_stream failed: {e}");
+                                match find_local_addr(registered, &protocol) {
+                                    None => {
+                                        warn!(%conn_id, ?protocol,
+                                            "no local address configured for protocol");
+                                    }
+                                    Some(local_addr) => {
+                                        if let Some(stream) = pending_streams.remove(&conn_id) {
+                                            // Stream already arrived — proxy immediately.
+                                            tokio::spawn(proxy::proxy_connection(
+                                                stream, local_addr, conn_id,
+                                            ));
+                                        } else {
+                                            // Stream hasn't arrived yet — stash the address.
+                                            debug!(%conn_id, "NewConnection arrived before stream — buffering");
+                                            pending_conns.insert(conn_id, local_addr);
                                         }
                                     }
-                                } else {
-                                    debug!(%conn_id, "data conn unavailable, skipping proxy");
                                 }
                             }
 
@@ -472,13 +487,50 @@ async fn connect_data_ws(server: &str, session_id: Uuid, insecure: bool) -> Opti
     match result {
         Ok((ws, _)) => {
             let compat = WsCompat::new(ws);
-            let conn = Connection::new(compat, yamux::Config::default(), Mode::Client);
-            info!(%session_id, "data WebSocket connected, yamux Mode::Client");
+            // Mode::Server: the server (Mode::Client) opens streams and writes
+            // first; we accept inbound streams via poll_next_inbound.
+            let conn = Connection::new(compat, yamux::Config::default(), Mode::Server);
+            info!(%session_id, "data WebSocket connected, yamux Mode::Server");
             Some(conn)
         }
         Err(e) => {
             debug!("data WebSocket not available ({e})");
             None
+        }
+    }
+}
+
+/// Background driver for the client-side yamux connection.
+///
+/// Continuously polls `poll_next_inbound` (which also drives all outbound IO).
+/// For each accepted stream, reads the 16-byte conn_id prefix the server
+/// wrote, then forwards the (conn_id, stream) pair to the main loop.
+async fn drive_client_mux(
+    mut conn: DataConn,
+    stream_tx: mpsc::Sender<(Uuid, YamuxStream)>,
+) {
+    loop {
+        match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
+            Some(Ok(mut stream)) => {
+                let mut id_bytes = [0u8; 16];
+                match stream.read_exact(&mut id_bytes).await {
+                    Ok(()) => {
+                        let conn_id = Uuid::from_bytes(id_bytes);
+                        if stream_tx.send((conn_id, stream)).await.is_err() {
+                            break; // main loop exited
+                        }
+                    }
+                    Err(e) => warn!("read conn_id from yamux stream: {e}"),
+                }
+            }
+            Some(Err(e)) => {
+                debug!("yamux data conn error: {e}");
+                break;
+            }
+            None => {
+                debug!("yamux data conn closed");
+                break;
+            }
         }
     }
 }

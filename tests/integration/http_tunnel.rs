@@ -20,10 +20,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-#[allow(unused_imports)]
-use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use axum::{routing::get, Router};
 use common::*;
@@ -66,31 +63,23 @@ async fn http_tunnel_proxies_hello_world() {
 
     // 2. Start the rustunnel server.
     let server = TestServer::start().await;
-    let core = Arc::clone(&server.core);
 
     // 3. Connect test client and register an HTTP tunnel.
     let mut client = TestClient::connect(&server).await.expect("client auth");
+    let session_id = client.session_id.unwrap();
 
     let (_tunnel_id, subdomain, _public_url) = client
         .register_http_tunnel(Some("hello"))
         .await
         .expect("tunnel registration");
 
-    // 4. Spawn a handler loop: for every NewConnection the server sends,
-    //    inject a yamux stream pair so the edge can proxy the request.
-    let core_clone = Arc::clone(&core);
-    tokio::spawn(async move {
-        loop {
-            let conn_id = match client.wait_new_connection().await {
-                Ok(id) => id,
-                Err(_) => break,
-            };
-            inject_proxy(&core_clone, conn_id, local_addr).await;
-        }
-    });
+    // 4. Connect the data WebSocket bridge.  The server opens one yamux stream
+    //    per incoming HTTP request (Mode::Client); this bridge accepts those
+    //    streams (Mode::Server) and forwards data to the local hello-world server.
+    connect_data_bridge(&server, session_id, local_addr);
 
-    // 5. Small delay to let the tunnel handler task start.
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    // 5. Small delay to let the data WebSocket connect and yamux handshake complete.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // 6. Make an HTTPS request to the tunnel.
     //    The Host header carries the subdomain that the edge uses for routing.
@@ -196,25 +185,17 @@ async fn multiple_requests_through_tunnel() {
 
     let (local_addr, _hello_shutdown) = start_hello_world_server().await;
     let server = TestServer::start().await;
-    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
+    let session_id = client.session_id.unwrap();
     let (_, subdomain, _) = client
         .register_http_tunnel(Some("multi"))
         .await
         .expect("register");
 
-    let core_clone = Arc::clone(&core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_clone, conn_id, local_addr).await;
-        }
-    });
+    connect_data_bridge(&server, session_id, local_addr);
 
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let http_client = insecure_http_client();
     let url = format!("https://127.0.0.1:{}/", server.https_port);

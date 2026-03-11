@@ -14,7 +14,6 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use common::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -69,25 +68,17 @@ async fn tcp_tunnel_echoes_data() {
 
     // 2. Start the rustunnel server.
     let server = TestServer::start().await;
-    let core = Arc::clone(&server.core);
 
     // 3. Connect client and register a TCP tunnel.
     let mut client = TestClient::connect(&server).await.expect("auth");
+    let session_id = client.session_id.unwrap();
     let (_tunnel_id, assigned_port) = client
         .register_tcp_tunnel()
         .await
         .expect("TCP tunnel registration");
 
-    // 4. Handler loop: inject yamux pair for each incoming connection.
-    let core_clone = Arc::clone(&core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_clone, conn_id, local_addr).await;
-        }
-    });
+    // 4. Connect the data WebSocket bridge.
+    connect_data_bridge(&server, session_id, local_addr);
 
     // Wait for the TCP edge to start the per-port listener.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -115,20 +106,12 @@ async fn tcp_tunnel_echoes_larger_payload() {
 
     let (local_addr, _echo_shutdown) = start_echo_server().await;
     let server = TestServer::start().await;
-    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
+    let session_id = client.session_id.unwrap();
     let (_, assigned_port) = client.register_tcp_tunnel().await.expect("register");
 
-    let core_clone = Arc::clone(&core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_clone, conn_id, local_addr).await;
-        }
-    });
+    connect_data_bridge(&server, session_id, local_addr);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -190,20 +173,12 @@ async fn ping_pong_through_tcp_tunnel() {
 
     let (local_addr, _echo_shutdown) = start_echo_server().await;
     let server = TestServer::start().await;
-    let core = Arc::clone(&server.core);
 
     let mut client = TestClient::connect(&server).await.expect("auth");
+    let session_id = client.session_id.unwrap();
     let (_, port) = client.register_tcp_tunnel().await.expect("register");
 
-    let core_clone = Arc::clone(&core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_clone, conn_id, local_addr).await;
-        }
-    });
+    connect_data_bridge(&server, session_id, local_addr);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

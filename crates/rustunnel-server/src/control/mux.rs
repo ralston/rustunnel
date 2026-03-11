@@ -9,22 +9,19 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use futures_util::future::poll_fn;
 use futures_util::io::{AsyncRead, AsyncWrite};
 use futures_util::sink::Sink;
 use futures_util::stream::Stream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use uuid::Uuid;
-use yamux::{Connection, Mode, Stream as YamuxStream};
+use yamux::{Connection, Mode};
 
 // DuplexStream is kept alive for the lifetime of the MuxSession by storing
 // the client end inside it; see start_detached.
 use tokio::io::DuplexStream;
 use tokio_util::compat::Compat;
 
-use crate::error::{Error, Result};
 
 // ── WsCompat ─────────────────────────────────────────────────────────────────
 
@@ -148,11 +145,16 @@ pub struct MuxSession {
 impl MuxSession {
     /// Create a `MuxSession` backed by an in-process loopback pair.
     ///
+    /// The server acts as `Mode::Client` so it can open outbound streams and
+    /// write the first bytes (triggering the yamux SYN frame) without waiting
+    /// for the remote side.  The remote client runs `Mode::Server` and accepts
+    /// inbound streams via `next_inbound`.
+    ///
     /// Call [`take_pipe_client`] to retrieve the peer end so it can be
     /// bridged to the real data WebSocket.
     pub fn start_detached() -> Self {
         let (server_side, client_side) = tokio::io::duplex(64 * 1024);
-        let conn = Connection::new(server_side.compat(), yamux::Config::default(), Mode::Server);
+        let conn = Connection::new(server_side.compat(), yamux::Config::default(), Mode::Client);
         Self {
             conn,
             pipe_client: Some(client_side),
@@ -164,26 +166,11 @@ impl MuxSession {
         self.pipe_client.take()
     }
 
-    /// Poll for the next inbound stream from the remote peer.
-    pub async fn next_inbound(&mut self) -> Option<yamux::Result<YamuxStream>> {
-        poll_fn(|cx| self.conn.poll_next_inbound(cx)).await
+    /// Consume the session and return the raw yamux `Connection`.
+    ///
+    /// Used by the session handler to hand the connection off to a dedicated
+    /// driver task that continuously drives IO.
+    pub fn into_conn(self) -> Connection<Compat<DuplexStream>> {
+        self.conn
     }
-
-    /// Open a new outbound stream to the remote peer.
-    pub async fn open_stream(&mut self) -> yamux::Result<YamuxStream> {
-        poll_fn(|cx| self.conn.poll_new_outbound(cx)).await
-    }
-}
-
-// ── open_data_stream ──────────────────────────────────────────────────────────
-
-/// Open a yamux data stream for `conn_id` and return it.
-///
-/// The caller writes a `DataStreamOpen` control frame so the client can
-/// correlate the stream with the pending proxy connection.
-pub async fn open_data_stream(mux: &mut MuxSession, conn_id: Uuid) -> Result<YamuxStream> {
-    tracing::debug!(%conn_id, "opening yamux data stream");
-    mux.open_stream()
-        .await
-        .map_err(|e| Error::Mux(e.to_string()))
 }

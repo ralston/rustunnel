@@ -16,7 +16,6 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use common::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -82,21 +81,14 @@ async fn tcp_tunnel_works_after_server_restart() {
 
     // Connect and register a TCP tunnel on server v1.
     let mut client_v1 = TestClient::connect(&server_v1).await.expect("v1 auth");
+    let session_id_v1 = client_v1.session_id.unwrap();
     let (_tunnel_id, assigned_port) = client_v1
         .register_tcp_tunnel()
         .await
         .expect("v1 tunnel registration");
 
-    // Inject handler.
-    let core_v1 = Arc::clone(&server_v1.core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client_v1.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_v1, conn_id, local_addr).await;
-        }
-    });
+    // Connect the data WebSocket bridge so yamux streams can be proxied.
+    connect_data_bridge(&server_v1, session_id_v1, local_addr);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -134,20 +126,13 @@ async fn tcp_tunnel_works_after_server_restart() {
 
     // Connect a fresh client and register a new tunnel.
     let mut client_v2 = TestClient::connect(&server_v2).await.expect("v2 auth");
+    let session_id_v2 = client_v2.session_id.unwrap();
     let (_tunnel_id2, assigned_port2) = client_v2
         .register_tcp_tunnel()
         .await
         .expect("v2 tunnel registration");
 
-    let core_v2 = Arc::clone(&server_v2.core);
-    tokio::spawn(async move {
-        loop {
-            let Ok(conn_id) = client_v2.wait_new_connection().await else {
-                break;
-            };
-            inject_proxy(&core_v2, conn_id, local_addr).await;
-        }
-    });
+    connect_data_bridge(&server_v2, session_id_v2, local_addr);
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

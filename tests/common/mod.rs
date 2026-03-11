@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use futures_util::future::poll_fn;
+use futures_util::io::AsyncReadExt;
 use futures_util::{SinkExt, StreamExt};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::ClientConfig;
@@ -25,9 +26,11 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
-use tokio_util::compat::TokioAsyncReadCompatExt;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use uuid::Uuid;
 use yamux::{Config as YamuxConfig, Connection, Mode};
+
+use rustunnel_server::control::mux::WsCompat;
 
 use rustunnel_protocol::{decode_frame, encode_frame, ControlFrame, TunnelProtocol};
 use rustunnel_server::config::{
@@ -549,7 +552,80 @@ impl TestClient {
     }
 }
 
-// ── yamux stream injection ────────────────────────────────────────────────────
+// ── data WebSocket bridge ─────────────────────────────────────────────────────
+
+/// Connect a `/_data/<session_id>` WebSocket to the server and run a yamux
+/// bridge task that handles all proxy connections automatically.
+///
+/// The server runs yamux `Mode::Client` and opens one outbound stream per
+/// incoming HTTP/TCP connection.  It writes a 16-byte conn_id prefix to each
+/// stream so the client can route it.  This function connects a `Mode::Server`
+/// yamux connection, accepts those inbound streams, reads the conn_id, and
+/// bidirectionally copies data between the stream and `local_addr`.
+///
+/// Returns immediately after spawning the background task.
+pub fn connect_data_bridge(server: &TestServer, session_id: Uuid, local_addr: SocketAddr) {
+    let url = format!(
+        "wss://127.0.0.1:{}/_data/{}",
+        server.control_port, session_id
+    );
+    let connector = Connector::Rustls(insecure_client_tls());
+
+    tokio::spawn(async move {
+        let (ws, _) = match tokio_tungstenite::connect_async_tls_with_config(
+            &url,
+            None,
+            false,
+            Some(connector),
+        )
+        .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("[test data bridge] WS connect failed: {e}");
+                return;
+            }
+        };
+
+        // yamux Mode::Server: the server (Mode::Client) opens outbound streams.
+        let ws_compat = WsCompat::new(ws);
+        let mut conn = Connection::new(ws_compat, YamuxConfig::default(), Mode::Server);
+
+        loop {
+            match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
+                Some(Ok(mut stream)) => {
+                    // Read the 16-byte conn_id prefix the server wrote.
+                    let mut id_bytes = [0u8; 16];
+                    if stream.read_exact(&mut id_bytes).await.is_err() {
+                        continue;
+                    }
+                    let _conn_id = Uuid::from_bytes(id_bytes);
+
+                    // Bridge the yamux stream to the local service.
+                    tokio::spawn(async move {
+                        match tokio::net::TcpStream::connect(local_addr).await {
+                            Ok(mut local) => {
+                                let mut remote = stream.compat();
+                                let _ =
+                                    tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                            }
+                            Err(e) => {
+                                eprintln!("[test data bridge] connect {local_addr}: {e}");
+                            }
+                        }
+                    });
+                }
+                Some(Err(e)) => {
+                    eprintln!("[test data bridge] yamux error: {e}");
+                    break;
+                }
+                None => break,
+            }
+        }
+    });
+}
+
+// ── yamux stream injection (legacy, kept for reference) ──────────────────────
 
 /// Yamux 0.13 uses a lazy SYN: the SYN frame is only sent when the opener
 /// writes the first byte.  Therefore we cannot open a stream on Side A and

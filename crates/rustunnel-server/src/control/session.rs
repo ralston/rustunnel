@@ -12,12 +12,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures_util::future::poll_fn;
+use futures_util::io::AsyncWriteExt;
 use futures_util::{SinkExt, StreamExt};
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, timeout, Instant};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
 
 use rustunnel_protocol::{decode_frame, encode_frame, ControlFrame, TunnelProtocol};
@@ -105,6 +107,60 @@ where
         core.set_data_pipe(&session_id, pipe);
     }
 
+    // Extract the raw yamux Connection and hand it to a dedicated driver task.
+    //
+    // yamux 0.13 uses lazy SYNs and requires the Connection to be polled
+    // continuously to flush outbound frames to the underlying IO (the duplex
+    // pipe that is bridged to the real data WebSocket).  The driver task:
+    //   • Accepts open-stream requests from the main loop via `open_rx`.
+    //   • For each request: opens an outbound stream (Mode::Client), writes
+    //     the 16-byte conn_id to force the SYN+DATA to be flushed, then hands
+    //     the stream to the edge task via `core.resolve_pending_conn`.
+    //   • Continuously polls `poll_next_inbound` (which also drives all
+    //     outbound IO) between requests.
+    let conn = mux.into_conn();
+    let (open_tx, mut open_rx) = mpsc::channel::<uuid::Uuid>(16);
+    let core_for_driver = Arc::clone(core);
+    tokio::spawn(async move {
+        let mut conn = conn;
+        loop {
+            tokio::select! {
+                req = open_rx.recv() => {
+                    let conn_id = match req { None => break, Some(id) => id };
+                    match poll_fn(|cx| conn.poll_new_outbound(cx)).await {
+                        Ok(mut stream) => {
+                            // Writing the conn_id bytes immediately forces yamux
+                            // to emit a SYN + DATA frame, which the driver task's
+                            // next poll_next_inbound call will flush to the pipe.
+                            if stream.write_all(conn_id.as_bytes()).await.is_err()
+                                || stream.flush().await.is_err()
+                            {
+                                tracing::warn!(%conn_id, "failed to write/flush yamux stream");
+                                continue;
+                            }
+                            if !core_for_driver.resolve_pending_conn(&conn_id, stream) {
+                                tracing::warn!(%conn_id, "no edge task waiting for this conn_id");
+                            }
+                        }
+                        Err(e) => tracing::warn!(%conn_id, "yamux open_stream: {e}"),
+                    }
+                }
+
+                // poll_next_inbound drives ALL yamux IO (including flushing
+                // outbound frames written above).  In Mode::Client the server
+                // will never receive genuine inbound streams, so any that
+                // arrive are simply discarded.
+                result = poll_fn(|cx| conn.poll_next_inbound(cx)) => {
+                    match result {
+                        Some(Ok(_)) => tracing::debug!("unexpected inbound yamux stream — ignored"),
+                        Some(Err(e)) => { tracing::debug!("yamux driver error: {e}"); break; }
+                        None => { tracing::debug!("yamux connection closed"); break; }
+                    }
+                }
+            }
+        }
+    });
+
     let ctx = SessionCtx {
         session_id,
         core,
@@ -117,7 +173,7 @@ where
         &mut ping_out_rx,
         pong_in_tx,
         &ctx,
-        &mut mux,
+        open_tx,
     )
     .await;
 
@@ -217,7 +273,7 @@ async fn main_loop<S>(
     ping_out_rx: &mut mpsc::Receiver<u64>,
     pong_in_tx: mpsc::Sender<u64>,
     ctx: &SessionCtx<'_>,
-    mux: &mut MuxSession,
+    open_tx: mpsc::Sender<uuid::Uuid>,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -249,7 +305,7 @@ where
                             std::io::ErrorKind::BrokenPipe, e.to_string())));
                     }
                     Some(Ok(msg)) => {
-                        handle_client_message(msg, ws, ctx, &pong_in_tx, mux).await?;
+                        handle_client_message(msg, ws, ctx, &pong_in_tx).await?;
                     }
                 }
             }
@@ -263,7 +319,13 @@ where
                         return Ok(());
                     }
                     Some(ControlMessage::NewConnection { conn_id, client_addr, protocol }) => {
-                        tracing::debug!(%session_id, %conn_id, %client_addr, "fwd NewConnection");
+                        tracing::debug!(%session_id, %conn_id, %client_addr, "NewConnection: opening yamux stream");
+                        // Ask the yamux driver task to open an outbound stream,
+                        // write the conn_id bytes (forcing SYN), and hand the
+                        // stream to the waiting edge task.
+                        let _ = open_tx.send(conn_id).await;
+                        // Notify the client so it can correlate the arriving
+                        // yamux stream with the local service to proxy.
                         send_frame(ws, &ControlFrame::NewConnection {
                             conn_id,
                             client_addr: client_addr.to_string(),
@@ -283,17 +345,11 @@ async fn handle_client_message<S>(
     ws: &mut WebSocketStream<S>,
     ctx: &SessionCtx<'_>,
     pong_in_tx: &mpsc::Sender<u64>,
-    mux: &mut MuxSession,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let SessionCtx {
-        session_id,
-        core,
-        config,
-        audit_tx,
-    } = ctx;
+    let SessionCtx { session_id, core, config, audit_tx } = ctx;
     let session_id = *session_id;
     let frame = match parse_binary(msg) {
         Ok(f) => f,
@@ -397,26 +453,6 @@ where
         ControlFrame::Pong { timestamp } => {
             tracing::trace!(%session_id, timestamp, "pong");
             let _ = pong_in_tx.try_send(timestamp);
-        }
-
-        ControlFrame::DataStreamOpen { conn_id } => {
-            tracing::debug!(%session_id, %conn_id, "data stream opened by client");
-            // Accept the next inbound yamux stream the client opened, then
-            // hand it to the edge task that is waiting on this conn_id.
-            match mux.next_inbound().await {
-                Some(Ok(stream)) => {
-                    if !core.resolve_pending_conn(&conn_id, stream) {
-                        tracing::warn!(%conn_id, "no pending edge task waiting for this conn_id");
-                    }
-                }
-                Some(Err(e)) => {
-                    tracing::warn!(%session_id, %conn_id, "yamux error accepting data stream: {e}");
-                }
-                None => {
-                    tracing::warn!(%session_id, "yamux session closed");
-                    return Err(Error::Mux("yamux session closed".into()));
-                }
-            }
         }
 
         other => {
