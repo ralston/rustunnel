@@ -28,6 +28,10 @@ pub async fn proxy_connection(yamux_stream: YamuxStream, local_addr: String, con
         }
     };
 
+    // Disable Nagle's algorithm so small response headers from the local
+    // service are not buffered before being forwarded through the tunnel.
+    let _ = local.set_nodelay(true);
+
     // yamux::Stream implements futures::io::{AsyncRead, AsyncWrite}.
     // Bridge to tokio IO traits with the compat wrapper.
     let mut remote = yamux_stream.compat();

@@ -57,6 +57,10 @@ pub async fn run_control_plane(
             }
         };
 
+        // Disable Nagle's algorithm so small control frames (NewConnection, etc.)
+        // are sent immediately rather than buffered for up to 40 ms.
+        let _ = tcp_stream.set_nodelay(true);
+
         tracing::debug!(%peer_addr, "new TCP connection");
 
         let acceptor = TlsAcceptor::from(Arc::clone(&tls_config.load()));

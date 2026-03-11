@@ -27,7 +27,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
-use hyper::body::{Body, Incoming};
+use hyper::body::{Body, Frame, Incoming};
 use hyper::header::HOST;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -413,12 +413,27 @@ async fn forward_http(
 
     let upstream = sender.send_request(fwd_req).await?;
 
-    // Collect the full response body.
     let (mut resp_parts, resp_body) = upstream.into_parts();
-    let body_bytes = resp_body.collect().await?.to_bytes();
     remove_hop_by_hop(&mut resp_parts.headers);
 
-    Ok(Response::from_parts(resp_parts, full(body_bytes)))
+    // Stream the response body frame-by-frame so the browser receives the
+    // first bytes as soon as the local service starts responding (TTFB fix).
+    // `sender` is moved into the unfold state to keep the upstream HTTP/1.1
+    // connection alive for the entire duration of the body transfer.
+    let body_stream = futures_util::stream::unfold(
+        (resp_body, sender),
+        |(mut body, sender)| async move {
+            match body.frame().await {
+                Some(Ok(f)) => Some((Ok::<Frame<Bytes>, Infallible>(f), (body, sender))),
+                _ => None,
+            }
+        },
+    );
+
+    Ok(Response::from_parts(
+        resp_parts,
+        http_body_util::StreamBody::new(body_stream).boxed(),
+    ))
 }
 
 // ── WebSocket upgrade ─────────────────────────────────────────────────────────
