@@ -23,6 +23,7 @@ A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local se
   - [7 — Set up systemd service](#7--set-up-systemd-service)
   - [8 — Open firewall ports](#8--open-firewall-ports)
   - [9 — Verify the server is running](#9--verify-the-server-is-running)
+  - [Updating the server](#updating-the-server)
 - [Docker deployment](#docker-deployment)
 - [Client configuration](#client-configuration)
   - [Quick start (CLI flags)](#quick-start-cli-flags)
@@ -439,6 +440,16 @@ curl -s http://localhost:9090/metrics
 > **Port reminder**: port 4040 is the control-plane WebSocket (clients connect here),
 > not the dashboard. Hitting it with plain HTTP returns `HTTP/0.9` which is expected.
 > The dashboard is on `dashboard_port` — check your `server.toml` if unsure.
+
+### Updating the server
+
+Pull the latest code, rebuild, install, and restart in one command:
+
+```bash
+cd ~/rustunnel && sudo make update-server
+```
+
+This runs `git pull` → `cargo build --release` → `install` → `systemctl restart` → `systemctl status`.
 
 ---
 
