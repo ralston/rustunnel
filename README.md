@@ -127,45 +127,28 @@ openssl req -x509 -newkey rsa:2048 -keyout /tmp/rustunnel-dev/key.pem \
   -subj "/CN=localhost"
 ```
 
-Create a local config file at `/tmp/rustunnel-dev/server.toml`:
-
-```toml
-[server]
-domain       = "localhost"
-http_port    = 8080
-https_port   = 8443
-control_port = 4040
-dashboard_port = 4041
-
-[tls]
-cert_path = "/tmp/rustunnel-dev/cert.pem"
-key_path  = "/tmp/rustunnel-dev/key.pem"
-
-[auth]
-admin_token  = "dev-secret-change-me"
-require_auth = false
-
-[database]
-path = "/tmp/rustunnel-dev/rustunnel.db"
-
-[logging]
-level  = "debug"
-format = "pretty"
-
-[limits]
-max_tunnels_per_session    = 10
-max_connections_per_tunnel = 50
-rate_limit_rps             = 1000
-ip_rate_limit_rps          = 0        # 0 = disabled locally
-request_body_max_bytes     = 10485760 # 10 MB
-tcp_port_range             = [20000, 20099]
-```
-
-Start the server:
+A ready-made local config is checked into the repository at **`deploy/local/server.toml`**.
+It points to the self-signed cert paths above and has auth disabled for convenience.
+Start the server with it directly:
 
 ```bash
-cargo run -p rustunnel-server -- --config /tmp/rustunnel-dev/server.toml
+cargo run -p rustunnel-server -- --config deploy/local/server.toml
 ```
+
+Key settings in `deploy/local/server.toml`:
+
+| Setting | Value |
+|---|---|
+| Domain | `localhost` |
+| HTTP edge | `:8080` |
+| HTTPS edge | `:8443` |
+| Control plane | `:4040` |
+| Dashboard | `:4041` |
+| Auth token | `dev-secret-change-me` |
+| Auth required | `false` |
+| TLS cert | `/tmp/rustunnel-dev/cert.pem` |
+| TLS key | `/tmp/rustunnel-dev/key.pem` |
+| Database | `/tmp/rustunnel-dev/rustunnel.db` |
 
 ### Run the client locally
 
