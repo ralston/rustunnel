@@ -62,6 +62,12 @@ struct Cli {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    // rustls 0.23 requires an explicit CryptoProvider to be installed once
+    // before any TLS operations.  Install ring as the process-wide default.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls ring provider");
+
     let cli = Cli::parse();
 
     // Load config before tracing is initialised so we can eprintln! on error.
