@@ -34,6 +34,10 @@ use crate::net::bind_reuse;
 /// `tls_config` is read on **every** inbound connection so that certificate
 /// renewals performed by [`crate::tls::CertManager`] are picked up
 /// immediately without restarting.
+// The `accept_hdr_async` callback must return `Result<Response, Response>`.
+// The `Err` variant (`hyper::Response<Option<String>>`) is a third-party type
+// we cannot reduce in size, so the lint is suppressed here.
+#[allow(clippy::result_large_err)]
 pub async fn run_control_plane(
     addr: SocketAddr,
     core: Arc<TunnelCore>,
