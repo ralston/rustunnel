@@ -28,6 +28,9 @@ use crate::audit::{AuditEvent, AuditTx};
 use crate::config::ServerConfig;
 use crate::control::mux::MuxSession;
 use crate::core::{ControlMessage, TunnelCore};
+use sqlx::SqlitePool;
+
+use crate::db;
 use crate::error::{Error, Result};
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -57,10 +60,11 @@ pub async fn handle_session<S>(
     core: Arc<TunnelCore>,
     config: Arc<ServerConfig>,
     audit_tx: AuditTx,
+    pool: SqlitePool,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    match run_session(ws, peer_addr, &core, &config, &audit_tx).await {
+    match run_session(ws, peer_addr, &core, &config, &audit_tx, &pool).await {
         Ok(()) => tracing::info!(%peer_addr, "session ended cleanly"),
         Err(e) => tracing::warn!(%peer_addr, "session error: {e}"),
     }
@@ -74,6 +78,7 @@ async fn run_session<S>(
     core: &Arc<TunnelCore>,
     config: &Arc<ServerConfig>,
     audit_tx: &AuditTx,
+    pool: &SqlitePool,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -83,7 +88,7 @@ where
 
     // Auth.
     let (mut ws, session_id) =
-        auth_handshake(ws, peer_addr, core, config, ctrl_tx, audit_tx).await?;
+        auth_handshake(ws, peer_addr, core, config, ctrl_tx, audit_tx, pool).await?;
 
     tracing::info!(%peer_addr, %session_id, "session authenticated");
 
@@ -203,6 +208,7 @@ async fn auth_handshake<S>(
     config: &Arc<ServerConfig>,
     ctrl_tx: mpsc::Sender<ControlMessage>,
     audit_tx: &AuditTx,
+    pool: &SqlitePool,
 ) -> Result<(WebSocketStream<S>, Uuid)>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -237,7 +243,16 @@ where
         }
     };
 
-    let authed = !config.auth.require_auth || token == config.auth.admin_token;
+    let authed = if !config.auth.require_auth {
+        true
+    } else if token == config.auth.admin_token {
+        true
+    } else {
+        // Fall back to database token lookup so tokens created via the
+        // dashboard (or `rustunnel token create`) are accepted by the
+        // control plane, not just by the REST API.
+        matches!(db::verify_token(pool, &token).await, Ok(Some(_)))
+    };
     if !authed {
         let _ = send_frame(
             &mut ws,

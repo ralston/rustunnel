@@ -159,8 +159,9 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
         let cfg = Arc::clone(&config);
         let tls_handle = Arc::clone(&tls_handle);
         let audit_tx = audit_tx.clone();
+        let pool = pool.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_control_plane(control_addr, core, cfg, tls_handle, audit_tx).await {
+            if let Err(e) = run_control_plane(control_addr, core, cfg, tls_handle, audit_tx, pool).await {
                 error!("control plane exited: {e}");
             }
         })
