@@ -503,22 +503,28 @@ async fn connect_data_ws(server: &str, session_id: Uuid, insecure: bool) -> Opti
 /// Background driver for the client-side yamux connection.
 ///
 /// Continuously polls `poll_next_inbound` (which also drives all outbound IO).
-/// For each accepted stream, reads the 16-byte conn_id prefix the server
-/// wrote, then forwards the (conn_id, stream) pair to the main loop.
+/// For each accepted stream, a dedicated task is spawned to read the 16-byte
+/// conn_id prefix the server wrote and forward the (conn_id, stream) pair to
+/// the main loop. Spawning a task per stream means `poll_next_inbound` is
+/// called again immediately, so concurrent streams are accepted in parallel
+/// instead of serially.
 async fn drive_client_mux(mut conn: DataConn, stream_tx: mpsc::Sender<(Uuid, YamuxStream)>) {
     loop {
         match poll_fn(|cx| conn.poll_next_inbound(cx)).await {
             Some(Ok(mut stream)) => {
-                let mut id_bytes = [0u8; 16];
-                match stream.read_exact(&mut id_bytes).await {
-                    Ok(()) => {
-                        let conn_id = Uuid::from_bytes(id_bytes);
-                        if stream_tx.send((conn_id, stream)).await.is_err() {
-                            break; // main loop exited
+                // Spawn so the driver returns to poll_next_inbound immediately,
+                // allowing the next inbound stream to be accepted in parallel.
+                let stream_tx = stream_tx.clone();
+                tokio::spawn(async move {
+                    let mut id_bytes = [0u8; 16];
+                    match stream.read_exact(&mut id_bytes).await {
+                        Ok(()) => {
+                            let conn_id = Uuid::from_bytes(id_bytes);
+                            let _ = stream_tx.send((conn_id, stream)).await;
                         }
+                        Err(e) => warn!("read conn_id from yamux stream: {e}"),
                     }
-                    Err(e) => warn!("read conn_id from yamux stream: {e}"),
-                }
+                });
             }
             Some(Err(e)) => {
                 debug!("yamux data conn error: {e}");

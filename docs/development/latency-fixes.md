@@ -46,22 +46,20 @@ Source analysis: [latency-investigation.md](./latency-investigation.md)
 ## Phase 2 — Core Protocol Improvements
 
 **Goal**: Make concurrent requests truly parallel; reduce yamux window stalls.
-**Commit**: ⬜
+**Commit**: ✅
 
-### Fix 2a — Concurrent stream processing in drive_client_mux ⬜
+### Fix 2a — Concurrent stream processing in drive_client_mux ✅
 
 - **File**: `crates/rustunnel-client/src/control.rs`
 - **Function**: `drive_client_mux`
 - **Change**: Spawn a task per accepted stream instead of awaiting `read_exact` inline. This unblocks `poll_next_inbound` immediately so the next stream can be accepted in parallel.
 - **Impact**: When a browser loads a page with N subresources (CSS, JS, images), all N yamux streams are accepted and processed concurrently instead of one at a time. For a typical page with 10 assets, reduces stream-setup latency from `10 × T` to `1 × T`.
 
-### Fix 2b — Increase yamux window size ⬜
+### Fix 2b — Yamux window auto-tuning (yamux 0.13) ✅
 
-- **Files**:
-  - `crates/rustunnel-server/src/control/mux.rs` — server-side Connection
-  - `crates/rustunnel-client/src/control.rs` — client-side Connection
-- **Change**: Set `receive_window_size` from default 256 KB to 1 MB via `yamux::Config`
-- **Impact**: Responses larger than 256 KB no longer stall waiting for WINDOW_UPDATE round trips. Significant for pages with images, large JS bundles, downloads.
+- **Files**: No code change required.
+- **Note**: yamux 0.13 has built-in bandwidth-delay-product auto-tuning. Each stream starts at the 256 KB default and the window grows automatically based on measured RTT and throughput. There is no `Config` setter for the initial per-stream window in this version — the auto-tuning mechanism handles it. `max_connection_receive_window` defaults to 1 GiB which is already appropriate.
+- **Impact**: Window growth is handled automatically by yamux 0.13. Responses > 256 KB may experience one WINDOW_UPDATE round trip on the first request; subsequent large responses on the same connection benefit from the already-grown window.
 
 ---
 
