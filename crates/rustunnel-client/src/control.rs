@@ -26,7 +26,6 @@
 //! 4. Client connects to the local service and copies bytes bidirectionally.
 
 use std::io;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -495,11 +494,13 @@ fn proto_to_enum(proto: &str) -> Result<TunnelProtocol> {
     }
 }
 
-/// Find the local socket address for a registered tunnel matching `protocol`.
+/// Find the local address string (`"host:port"`) for a registered tunnel
+/// matching `protocol`.  Returns a raw string so that `TcpStream::connect`
+/// can perform DNS resolution (e.g. for `localhost`).
 fn find_local_addr(
     registered: &[(TunnelDef, String)],
     protocol: &TunnelProtocol,
-) -> Option<SocketAddr> {
+) -> Option<String> {
     for (def, _) in registered {
         let matches = match protocol {
             TunnelProtocol::Http | TunnelProtocol::Https => {
@@ -508,8 +509,7 @@ fn find_local_addr(
             TunnelProtocol::Tcp => def.proto == "tcp",
         };
         if matches {
-            let addr = format!("{}:{}", def.local_host, def.local_port);
-            return addr.parse().ok();
+            return Some(format!("{}:{}", def.local_host, def.local_port));
         }
     }
     None

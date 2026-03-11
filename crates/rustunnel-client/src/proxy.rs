@@ -3,7 +3,6 @@
 //! `proxy_connection` bridges a yamux data stream (the tunnel side) with a
 //! fresh TCP connection to the local service.
 
-use std::net::SocketAddr;
 use std::time::Instant;
 
 use tokio_util::compat::FuturesAsyncReadCompatExt;
@@ -14,11 +13,14 @@ use yamux::Stream as YamuxStream;
 /// Proxy bytes between `yamux_stream` (tunnel-side) and a new TCP connection
 /// to `local_addr` (service-side).
 ///
+/// `local_addr` is a `"host:port"` string; `TcpStream::connect` performs DNS
+/// resolution so both IP literals and hostnames (e.g. `localhost`) are accepted.
+///
 /// Logs byte counts and duration on completion.
-pub async fn proxy_connection(yamux_stream: YamuxStream, local_addr: SocketAddr, conn_id: Uuid) {
+pub async fn proxy_connection(yamux_stream: YamuxStream, local_addr: String, conn_id: Uuid) {
     debug!(%conn_id, %local_addr, "proxy: connecting to local service");
 
-    let mut local = match tokio::net::TcpStream::connect(local_addr).await {
+    let mut local = match tokio::net::TcpStream::connect(&local_addr).await {
         Ok(s) => s,
         Err(e) => {
             warn!(%conn_id, %local_addr, "proxy: failed to connect to local service: {e}");
