@@ -273,10 +273,7 @@ pub async fn list_tunnel_history(
 }
 
 /// Total number of tunnel_log rows matching an optional protocol filter.
-pub async fn count_tunnel_history(
-    pool: &SqlitePool,
-    protocol: Option<&str>,
-) -> Result<i64> {
+pub async fn count_tunnel_history(pool: &SqlitePool, protocol: Option<&str>) -> Result<i64> {
     let count: (i64,) = if let Some(proto) = protocol {
         sqlx::query_as("SELECT COUNT(*) FROM tunnel_log WHERE protocol = ?")
             .bind(proto)
