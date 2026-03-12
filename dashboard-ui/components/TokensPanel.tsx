@@ -164,6 +164,11 @@ function TokenRow({ token, onDelete, isDeleting }: TokenRowProps) {
       <td style={{ padding: '10px 14px', color: 'var(--muted)', fontFamily: 'var(--mono)', fontSize: 11 }}>
         {token.scope ?? <span style={{ opacity: 0.4 }}>unrestricted</span>}
       </td>
+      <td style={{ padding: '10px 14px', fontFamily: 'var(--mono)', fontSize: 12, whiteSpace: 'nowrap' }}>
+        {token.tunnel_count > 0
+          ? <span style={{ color: 'var(--text)' }}>{token.tunnel_count.toLocaleString()}</span>
+          : <span style={{ color: 'var(--muted)' }}>0</span>}
+      </td>
       <td style={{ padding: '10px 14px', color: 'var(--muted)', fontFamily: 'var(--mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
         {relativeTime(token.created_at)}
       </td>
@@ -255,7 +260,7 @@ export function TokensPanel({ api, tokens, error, refresh }: TokensPanelProps) {
             >
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--muted)' }}>
-                  {['Label', 'Scope', 'Created', 'Last Used', 'ID', ''].map((h) => (
+                  {['Label', 'Scope', 'Tunnels', 'Created', 'Last Used', 'ID', ''].map((h) => (
                     <th
                       key={h}
                       style={{

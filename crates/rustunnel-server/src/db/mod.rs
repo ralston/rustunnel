@@ -76,12 +76,14 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // Add `scope` column to existing databases that pre-date this migration.
-    // SQLite does not support IF NOT EXISTS for ALTER TABLE ADD COLUMN in all
-    // versions, so we catch the "duplicate column" error gracefully.
+    // Additive column migrations — errors are ignored because the column may
+    // already exist on databases created after these were added.
     let _ = sqlx::query("ALTER TABLE tokens ADD COLUMN scope TEXT")
         .execute(pool)
-        .await; // intentionally ignore error (column may already exist)
+        .await;
+    let _ = sqlx::query("ALTER TABLE tunnel_log ADD COLUMN token_id TEXT")
+        .execute(pool)
+        .await;
 
     Ok(())
 }
@@ -92,7 +94,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use models::Token;
+use models::{Token, TokenWithCount};
 
 /// Hash a raw token value with SHA-256.
 pub fn hash_token(raw: &str) -> String {
@@ -169,13 +171,58 @@ pub async fn delete_token(pool: &SqlitePool, id: &str) -> Result<bool> {
     Ok(rows > 0)
 }
 
-/// List all tokens.
-pub async fn list_tokens(pool: &SqlitePool) -> Result<Vec<Token>> {
-    let rows: Vec<Token> = sqlx::query_as(
-        "SELECT id, token_hash, label, created_at, last_used_at, scope \
-         FROM tokens ORDER BY created_at DESC",
+/// List all tokens with their historical tunnel registration counts.
+pub async fn list_tokens_with_counts(pool: &SqlitePool) -> Result<Vec<TokenWithCount>> {
+    let rows: Vec<TokenWithCount> = sqlx::query_as(
+        "SELECT t.id, t.token_hash, t.label, t.created_at, t.last_used_at, t.scope, \
+                COALESCE(COUNT(tl.id), 0) AS tunnel_count \
+         FROM tokens t \
+         LEFT JOIN tunnel_log tl ON tl.token_id = t.id \
+         GROUP BY t.id \
+         ORDER BY t.created_at DESC",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// ── tunnel log helpers ────────────────────────────────────────────────────────
+
+/// Insert a tunnel_log row when a tunnel is registered.
+pub async fn log_tunnel_registered(
+    pool: &SqlitePool,
+    tunnel_id: &str,
+    protocol: &str,
+    label: &str,
+    session_id: &str,
+    token_id: Option<&str>,
+) -> Result<()> {
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO tunnel_log (id, tunnel_id, protocol, label, session_id, token_id, registered_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(tunnel_id)
+    .bind(protocol)
+    .bind(label)
+    .bind(session_id)
+    .bind(token_id)
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Set `unregistered_at` on the tunnel_log row for `tunnel_id`.
+pub async fn log_tunnel_unregistered(pool: &SqlitePool, tunnel_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE tunnel_log SET unregistered_at = ? \
+         WHERE tunnel_id = ? AND unregistered_at IS NULL",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(tunnel_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

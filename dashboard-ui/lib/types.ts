@@ -36,6 +36,7 @@ export interface ApiToken {
   created_at: string;
   last_used_at: string | null;
   scope: string | null;
+  tunnel_count: number;
 }
 
 export interface CreateTokenResponse {

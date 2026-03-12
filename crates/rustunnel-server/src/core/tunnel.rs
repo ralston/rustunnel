@@ -63,6 +63,9 @@ pub struct SessionInfo {
     pub client_addr: SocketAddr,
     /// Opaque identifier of the auth token used (empty string when auth is disabled).
     pub auth_token_id: String,
+    /// The `tokens.id` (UUID) of the authenticated token, if it came from the DB.
+    /// `None` for the admin token or when auth is disabled.
+    pub db_token_id: Option<String>,
     /// Channel for sending control messages to the session handler task.
     pub control_tx: mpsc::Sender<ControlMessage>,
     /// Tunnel IDs owned by this session.
@@ -79,12 +82,14 @@ impl SessionInfo {
     pub fn new(
         client_addr: SocketAddr,
         auth_token_id: String,
+        db_token_id: Option<String>,
         control_tx: mpsc::Sender<ControlMessage>,
     ) -> Self {
         let now = Instant::now();
         Self {
             client_addr,
             auth_token_id,
+            db_token_id,
             control_tx,
             tunnels: Vec::new(),
             connected_at: now,

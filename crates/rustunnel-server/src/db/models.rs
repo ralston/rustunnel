@@ -30,8 +30,22 @@ pub struct TunnelLog {
     /// Subdomain (HTTP) or port string (TCP).
     pub label: String,
     pub session_id: String,
+    /// DB token ID that opened this tunnel; `None` for admin-token sessions.
+    pub token_id: Option<String>,
     pub registered_at: DateTime<Utc>,
     pub unregistered_at: Option<DateTime<Utc>>,
+}
+
+/// A token record with its historical tunnel registration count.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct TokenWithCount {
+    pub id: String,
+    pub token_hash: String,
+    pub label: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub scope: Option<String>,
+    pub tunnel_count: i64,
 }
 
 /// A single captured HTTP request/response pair.

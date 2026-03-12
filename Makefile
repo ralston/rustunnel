@@ -96,12 +96,12 @@ deploy: release-server
 	@echo "rustunnel deployed and started."
 
 ## update-server  Pull latest code, rebuild, install, and restart the service.
-update-server:
-	git pull
-	$(MAKE) release-server
-	install -Dm755 target/release/$(BINARY_SERVER) /usr/local/bin/$(BINARY_SERVER)
+update-server: release-server
+	install -Dm755 target/release/rustunnel-server /usr/local/bin/rustunnel-server
+	systemctl daemon-reload
 	systemctl restart rustunnel.service
 	systemctl status rustunnel.service
+	@echo "rustunnel updated and restarted."
 
 ## deploy-client  Install the client binary to /usr/local/bin.
 deploy-client: release-client

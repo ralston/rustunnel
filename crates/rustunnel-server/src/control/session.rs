@@ -50,6 +50,8 @@ struct SessionCtx<'a> {
     core: &'a Arc<TunnelCore>,
     config: &'a Arc<ServerConfig>,
     audit_tx: &'a AuditTx,
+    pool: &'a SqlitePool,
+    db_token_id: Option<String>,
 }
 
 // ── public entry point ────────────────────────────────────────────────────────
@@ -87,7 +89,7 @@ where
     let (ctrl_tx, mut ctrl_rx) = mpsc::channel::<ControlMessage>(CTRL_CHANNEL_SIZE);
 
     // Auth.
-    let (mut ws, session_id) =
+    let (mut ws, session_id, db_token_id) =
         auth_handshake(ws, peer_addr, core, config, ctrl_tx, audit_tx, pool).await?;
 
     tracing::info!(%peer_addr, %session_id, "session authenticated");
@@ -181,6 +183,8 @@ where
         core,
         config,
         audit_tx,
+        pool,
+        db_token_id,
     };
     let result = main_loop(
         &mut ws,
@@ -193,6 +197,17 @@ where
     .await;
 
     let _ = hb_stop_tx.send(());
+
+    // Mark any tunnels still open at disconnect time as unregistered.
+    let remaining: Vec<String> = core
+        .sessions
+        .get(&session_id)
+        .map(|s| s.tunnels.iter().map(|id| id.to_string()).collect())
+        .unwrap_or_default();
+    for tid in &remaining {
+        let _ = db::log_tunnel_unregistered(pool, tid).await;
+    }
+
     core.remove_session(&session_id);
     tracing::debug!(%session_id, "session removed");
 
@@ -209,7 +224,7 @@ async fn auth_handshake<S>(
     ctrl_tx: mpsc::Sender<ControlMessage>,
     audit_tx: &AuditTx,
     pool: &SqlitePool,
-) -> Result<(WebSocketStream<S>, Uuid)>
+) -> Result<(WebSocketStream<S>, Uuid, Option<String>)>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -243,16 +258,31 @@ where
         }
     };
 
-    let authed = if !config.auth.require_auth {
-        true
+    // Resolve auth and capture the DB token ID in one pass to avoid a second
+    // round-trip.  Admin token → None; DB token → Some(token.id).
+    let db_token_id: Option<String>;
+    let authed: bool;
+
+    if !config.auth.require_auth {
+        // Auth disabled — still try to resolve the DB token ID for tracking.
+        db_token_id = db::verify_token(pool, &token).await.ok().flatten().map(|t| t.id);
+        authed = true;
     } else if token == config.auth.admin_token {
-        true
+        db_token_id = None;
+        authed = true;
     } else {
-        // Fall back to database token lookup so tokens created via the
-        // dashboard (or `rustunnel token create`) are accepted by the
-        // control plane, not just by the REST API.
-        matches!(db::verify_token(pool, &token).await, Ok(Some(_)))
-    };
+        match db::verify_token(pool, &token).await {
+            Ok(Some(t)) => {
+                db_token_id = Some(t.id);
+                authed = true;
+            }
+            _ => {
+                db_token_id = None;
+                authed = false;
+            }
+        }
+    }
+
     if !authed {
         let _ = send_frame(
             &mut ws,
@@ -270,7 +300,7 @@ where
     }
 
     let token_id = token.clone();
-    let session_id = core.register_session(peer_addr, token, ctrl_tx);
+    let session_id = core.register_session(peer_addr, token, db_token_id.clone(), ctrl_tx);
 
     let _ = audit_tx.try_send(AuditEvent::AuthAttempt {
         peer: peer_addr.to_string(),
@@ -287,7 +317,7 @@ where
     )
     .await?;
 
-    Ok((ws, session_id))
+    Ok((ws, session_id, db_token_id))
 }
 
 // ── main loop ─────────────────────────────────────────────────────────────────
@@ -379,6 +409,8 @@ where
         core,
         config,
         audit_tx,
+        pool,
+        db_token_id,
     } = ctx;
     let session_id = *session_id;
     let frame = match parse_binary(msg) {
@@ -404,12 +436,21 @@ where
                                 "http"
                             };
                             let public_url = format!("{scheme}://{}.{}", sub, config.server.domain);
+                            let proto_str = format!("{protocol:?}").to_lowercase();
                             let _ = audit_tx.try_send(AuditEvent::TunnelRegistered {
                                 session_id: session_id.to_string(),
                                 tunnel_id: tunnel_id.to_string(),
-                                protocol: format!("{protocol:?}").to_lowercase(),
+                                protocol: proto_str.clone(),
                                 label: sub.clone(),
                             });
+                            let _ = db::log_tunnel_registered(
+                                pool,
+                                &tunnel_id.to_string(),
+                                &proto_str,
+                                &sub,
+                                &session_id.to_string(),
+                                db_token_id.as_deref(),
+                            ).await;
                             send_frame(
                                 ws,
                                 &ControlFrame::TunnelRegistered {
@@ -436,12 +477,21 @@ where
                 TunnelProtocol::Tcp => match core.register_tcp_tunnel(&session_id) {
                     Ok((tunnel_id, port)) => {
                         let public_url = format!("tcp://{}:{port}", config.server.domain);
+                        let port_str = port.to_string();
                         let _ = audit_tx.try_send(AuditEvent::TunnelRegistered {
                             session_id: session_id.to_string(),
                             tunnel_id: tunnel_id.to_string(),
                             protocol: "tcp".into(),
-                            label: port.to_string(),
+                            label: port_str.clone(),
                         });
+                        let _ = db::log_tunnel_registered(
+                            pool,
+                            &tunnel_id.to_string(),
+                            "tcp",
+                            &port_str,
+                            &session_id.to_string(),
+                            db_token_id.as_deref(),
+                        ).await;
                         send_frame(
                             ws,
                             &ControlFrame::TunnelRegistered {
@@ -473,6 +523,7 @@ where
                 tunnel_id: tunnel_id.to_string(),
                 label: String::new(),
             });
+            let _ = db::log_tunnel_unregistered(pool, &tunnel_id.to_string()).await;
             core.remove_tunnel(&tunnel_id);
         }
 

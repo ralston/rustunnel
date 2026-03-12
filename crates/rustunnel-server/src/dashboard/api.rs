@@ -401,7 +401,7 @@ async fn list_tokens(headers: HeaderMap, State(state): State<ApiState>) -> impl 
         return e.into_response();
     }
 
-    match db::list_tokens(&state.pool).await {
+    match db::list_tokens_with_counts(&state.pool).await {
         Ok(tokens) => Json(tokens).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
