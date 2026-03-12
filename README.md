@@ -31,6 +31,7 @@ A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local se
   - [Updating the server](#updating-the-server)
 - [Docker deployment](#docker-deployment) · [full guide](docs/docker-deployment.md)
 - [Client configuration](#client-configuration)
+  - [Installation](#installation)
   - [Quick start (CLI flags)](#quick-start-cli-flags)
   - [Config file](#config-file)
   - [Token management](#token-management)
@@ -523,12 +524,51 @@ make docker-stop
 
 ## Client configuration
 
-Install the client binary:
+### Installation
+
+**Option 1 — Homebrew (macOS and Linux, recommended)**
 
 ```bash
-# From source
+brew tap joaoh82/rustunnel
+brew install rustunnel
+```
+
+Homebrew installs a pre-built binary — no Rust toolchain required.
+The formula is updated automatically on every release.
+
+**Option 2 — Pre-built binary**
+
+Download the archive for your platform from the
+[latest GitHub Release](https://github.com/joaoh82/rustunnel/releases/latest),
+extract it, and move the `rustunnel` binary to a directory on your `$PATH`:
+
+```bash
+# Example for macOS Apple Silicon
+curl -L https://github.com/joaoh82/rustunnel/releases/latest/download/rustunnel-<version>-aarch64-apple-darwin.tar.gz \
+  | tar xz
+sudo install -Dm755 rustunnel /usr/local/bin/rustunnel
+```
+
+Available targets:
+
+| Platform | Archive |
+|----------|---------|
+| macOS Apple Silicon | `rustunnel-<version>-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `rustunnel-<version>-x86_64-apple-darwin.tar.gz` |
+| Linux x86_64 (glibc) | `rustunnel-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux x86_64 (musl, static) | `rustunnel-<version>-x86_64-unknown-linux-musl.tar.gz` |
+| Linux arm64 | `rustunnel-<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows x86_64 | `rustunnel-<version>-x86_64-pc-windows-msvc.zip` |
+
+**Option 3 — Build from source**
+
+Requires Rust 1.76+.
+
+```bash
+git clone https://github.com/joaoh82/rustunnel.git
+cd rustunnel
 cargo build --release -p rustunnel-client
-install -Dm755 target/release/rustunnel /usr/local/bin/rustunnel
+sudo install -Dm755 target/release/rustunnel /usr/local/bin/rustunnel
 
 # Or via make
 make deploy-client
