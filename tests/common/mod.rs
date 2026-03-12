@@ -269,6 +269,7 @@ impl TestServer {
             let core = Arc::clone(&core);
             let cfg = Arc::clone(&config);
             let tls_handle = Arc::clone(&tls_handle);
+            let pool = pool.clone();
             async move {
                 let _ = rustunnel_server::control::server::run_control_plane(
                     control_addr,
@@ -276,6 +277,7 @@ impl TestServer {
                     cfg,
                     tls_handle,
                     rustunnel_server::audit::noop_audit(),
+                    pool,
                 )
                 .await;
             }

@@ -360,7 +360,7 @@ mod tests {
     fn dummy_session(core: &TunnelCore) -> (Uuid, mpsc::Receiver<ControlMessage>) {
         let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
         let (tx, rx) = mpsc::channel(16);
-        let session_id = core.register_session(addr, "token-1".to_string(), tx);
+        let session_id = core.register_session(addr, "token-1".to_string(), None, tx);
         (session_id, rx)
     }
 
