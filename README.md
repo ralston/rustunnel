@@ -13,6 +13,7 @@ A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local se
   - [Run tests](#run-tests)
   - [Run the server locally](#run-the-server-locally)
   - [Run the client locally](#run-the-client-locally)
+  - [Git hooks](#git-hooks)
 - [Production deployment (Ubuntu / systemd)](#production-deployment-ubuntu--systemd)
   - [1 — Install dependencies](#1--install-dependencies)
   - [2 — Build release binaries](#2--build-release-binaries)
@@ -204,6 +205,24 @@ echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/localhost
 
 Then visit `http://abc123.localhost:8080` in the browser (include `:8080` since the
 local config uses port 8080, not port 80).
+
+### Git hooks
+
+A pre-push hook is included in `.githooks/` that mirrors the CI check step
+(format check + Clippy). Run this once after cloning to activate it:
+
+```bash
+make install-hooks
+```
+
+From that point on, every `git push` will automatically run:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+If either check fails the push is aborted, keeping the remote branch green.
 
 ---
 
