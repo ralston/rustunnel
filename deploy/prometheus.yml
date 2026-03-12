@@ -5,5 +5,5 @@ global:
 scrape_configs:
   - job_name: rustunnel
     static_configs:
-      - targets: ["rustunnel-server:9091"]
+      - targets: ["rustunnel-server:9090"]
     metrics_path: /metrics

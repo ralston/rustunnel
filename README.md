@@ -29,7 +29,7 @@ A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local se
   - [8 — Open firewall ports](#8--open-firewall-ports)
   - [9 — Verify the server is running](#9--verify-the-server-is-running)
   - [Updating the server](#updating-the-server)
-- [Docker deployment](#docker-deployment)
+- [Docker deployment](#docker-deployment) · [full guide](docs/docker-deployment.md)
 - [Client configuration](#client-configuration)
   - [Quick start (CLI flags)](#quick-start-cli-flags)
   - [Config file](#config-file)
@@ -482,35 +482,42 @@ This runs `git pull` → `cargo build --release` → `install` → `systemctl re
 
 ## Docker deployment
 
-A multi-stage Dockerfile and Docker Compose file are included in `deploy/`.
+A full Docker guide covering both local development (self-signed cert) and
+production VPS (Let's Encrypt) is available in
+[**docs/docker-deployment.md**](docs/docker-deployment.md).
 
-**Prerequisites:** create `deploy/server.toml` (copy from step 5 above and adjust paths if needed — inside the container the cert paths from Let's Encrypt won't be available unless you bind-mount `/etc/letsencrypt`).
+### Quick reference
 
 ```bash
-# Build image
+# Build the image (includes Next.js dashboard + Rust server)
 make docker-build
 
-# Start server only
+# Local development (self-signed cert, no auth required)
+docker compose -f deploy/docker-compose.local.yml up
+
+# Production VPS (requires deploy/server.toml to be configured first)
 make docker-run
 
-# Start server + Prometheus + Grafana
+# Production + Prometheus + Grafana monitoring stack
 make docker-run-monitoring
 
-# Tail logs
+# Tail server logs
 make docker-logs
 
 # Stop everything
 make docker-stop
 ```
 
-Mount your host Let's Encrypt directory into the container by adding to `deploy/docker-compose.yml`:
+### Files
 
-```yaml
-volumes:
-  - ./server.toml:/etc/rustunnel/server.toml:ro
-  - /etc/letsencrypt:/etc/letsencrypt:ro   # add this line
-  - rustunnel-data:/var/lib/rustunnel
-```
+| File | Purpose |
+|------|---------|
+| `deploy/Dockerfile` | Multi-stage build: Node.js UI → Rust server → slim runtime |
+| `deploy/docker-compose.yml` | Production compose file |
+| `deploy/docker-compose.local.yml` | Local development compose file |
+| `deploy/server.toml` | Production server config template |
+| `deploy/server.local.toml` | Local development server config |
+| `deploy/prometheus.yml` | Prometheus scrape config |
 
 ---
 

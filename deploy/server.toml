@@ -22,7 +22,8 @@ control_port = 4040
 
 # Dashboard UI and REST API.
 # Note: must be different from http_port (80), https_port (443), and control_port (4040).
-dashboard_port = 8080
+# When using Docker this must match the port mapped in docker-compose.yml (8443).
+dashboard_port = 8443
 
 # ── TLS ───────────────────────────────────────────────────────────────────────
 [tls]
