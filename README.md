@@ -1,5 +1,9 @@
 # rustunnel
 
+[![CI](https://github.com/joaoh82/rustunnel/actions/workflows/ci.yml/badge.svg)](https://github.com/joaoh82/rustunnel/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.76%2B-orange.svg)](https://www.rust-lang.org)
+
 A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local services through a public server over encrypted WebSocket connections with TLS termination, HTTP/TCP proxying, a live dashboard, Prometheus metrics, and audit logging.
 
 ---
@@ -33,6 +37,10 @@ A self-hosted, ngrok-style secure tunnel server written in Rust. Expose local se
 - [Port reference](#port-reference)
 - [Config file reference (server)](#config-file-reference-server)
 - [Monitoring](#monitoring)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
 
 ---
 
@@ -659,3 +667,45 @@ make docker-run-monitoring
 # Grafana:    http://localhost:3000  (admin / changeme)
 # Prometheus: http://localhost:9090
 ```
+
+---
+
+## Roadmap
+
+A detailed list of shipped features and planned future work is maintained in
+[**docs/ROADMAP.md**](docs/ROADMAP.md).
+
+---
+
+## Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. **Fork** the repository and create a feature branch from `main`.
+2. Run `make install-hooks` once after cloning to activate the pre-push quality gate.
+3. Make your changes. Ensure `make check` (fmt + Clippy) and `make test` pass locally.
+4. Open a **Pull Request** with a clear description of what changed and why.
+5. A maintainer will review and merge once CI is green.
+
+### Guidelines
+
+- Keep PRs focused — one logical change per PR.
+- Add or update tests for any new behaviour.
+- Follow the existing code style; `cargo fmt` is enforced by CI.
+- For larger changes or new features, open an issue first to discuss the approach.
+
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Contact
+
+**João Henrique Machado Silva**
+
+- GitHub: [@joaoh82](https://github.com/joaoh82)
+- Project: [github.com/joaoh82/rustunnel](https://github.com/joaoh82/rustunnel)
+- Issues & feature requests: [GitHub Issues](https://github.com/joaoh82/rustunnel/issues)
