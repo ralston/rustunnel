@@ -287,15 +287,9 @@ server: {server}
 
     term.write_line("")?;
     if exists {
-        term.write_line(&format!(
-            "Updated: {}",
-            config_path.display()
-        ))?;
+        term.write_line(&format!("Updated: {}", config_path.display()))?;
     } else {
-        term.write_line(&format!(
-            "Created: {}",
-            config_path.display()
-        ))?;
+        term.write_line(&format!("Created: {}", config_path.display()))?;
     }
     term.write_line("Run `rustunnel start` to connect using this config.")?;
 
