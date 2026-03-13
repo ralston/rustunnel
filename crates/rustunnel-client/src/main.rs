@@ -16,6 +16,7 @@ mod reconnect;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+use console::Term;
 use tracing_subscriber::EnvFilter;
 
 use config::{ClientConfig, TunnelDef};
@@ -47,6 +48,9 @@ enum Commands {
 
     /// Manage API tokens
     Token(TokenCmd),
+
+    /// Create a config file interactively (~/.rustunnel/config.yml)
+    Setup,
 }
 
 #[derive(Args, Clone)]
@@ -134,6 +138,7 @@ async fn run(cli: Cli) -> error::Result<()> {
         Commands::Tcp(args) => run_tunnel("tcp", args).await,
         Commands::Start(args) => run_start(args).await,
         Commands::Token(cmd) => run_token(cmd).await,
+        Commands::Setup => run_setup().await,
     }
 }
 
@@ -215,6 +220,85 @@ async fn run_token(cmd: TokenCmd) -> error::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn run_setup() -> error::Result<()> {
+    let term = Term::stdout();
+
+    term.write_line("rustunnel setup — create ~/.rustunnel/config.yml")?;
+    term.write_line("")?;
+
+    // Server prompt
+    term.write_line("Tunnel server address [tunnel.rustunnel.com:4040]: ")?;
+    let server_input = term.read_line()?;
+    let server = if server_input.trim().is_empty() {
+        "tunnel.rustunnel.com:4040".to_string()
+    } else {
+        server_input.trim().to_string()
+    };
+
+    // Auth token prompt
+    term.write_line("Auth token (leave blank to skip): ")?;
+    let token_input = term.read_line()?;
+    let auth_token = token_input.trim().to_string();
+
+    // Build config file contents
+    let auth_token_line = if auth_token.is_empty() {
+        "# auth_token: your-token-here".to_string()
+    } else {
+        format!("auth_token: {auth_token}")
+    };
+
+    let contents = format!(
+        r#"# rustunnel configuration
+# Documentation: https://github.com/joaoh82/rustunnel
+
+server: {server}
+{auth_token_line}
+
+# tunnels:
+#   web:
+#     proto: http
+#     local_port: 3000
+#   api:
+#     proto: http
+#     local_port: 8080
+#     subdomain: myapi
+#   database:
+#     proto: tcp
+#     local_port: 5432
+"#
+    );
+
+    // Write config file
+    let home = dirs::home_dir()
+        .ok_or_else(|| error::Error::Config("cannot determine home directory".into()))?;
+    let config_dir = home.join(".rustunnel");
+    std::fs::create_dir_all(&config_dir).map_err(|e| {
+        error::Error::Config(format!("cannot create {}: {e}", config_dir.display()))
+    })?;
+
+    let config_path = config_dir.join("config.yml");
+    let exists = config_path.exists();
+    std::fs::write(&config_path, &contents).map_err(|e| {
+        error::Error::Config(format!("cannot write {}: {e}", config_path.display()))
+    })?;
+
+    term.write_line("")?;
+    if exists {
+        term.write_line(&format!(
+            "Updated: {}",
+            config_path.display()
+        ))?;
+    } else {
+        term.write_line(&format!(
+            "Created: {}",
+            config_path.display()
+        ))?;
+    }
+    term.write_line("Run `rustunnel start` to connect using this config.")?;
+
     Ok(())
 }
 

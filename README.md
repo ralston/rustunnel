@@ -34,6 +34,7 @@ You can self-host or use our managed service.
 - [Docker deployment](#docker-deployment) · [full guide](docs/docker-deployment.md)
 - [Client configuration](#client-configuration)
   - [Installation](#installation)
+  - [Setup wizard](#setup-wizard)
   - [Quick start (CLI flags)](#quick-start-cli-flags)
   - [Config file](#config-file)
   - [Token management](#token-management)
@@ -579,6 +580,28 @@ sudo install -Dm755 target/release/rustunnel /usr/local/bin/rustunnel
 # Or via make
 make deploy-client
 ```
+
+### Setup wizard
+
+The easiest way to create your config file is the interactive setup wizard:
+
+```bash
+rustunnel setup
+```
+
+It prompts for your server address (default: `tunnel.rustunnel.com:4040`) and auth token, then writes `~/.rustunnel/config.yml` with a commented `tunnels:` example section.
+
+```
+rustunnel setup — create ~/.rustunnel/config.yml
+
+Tunnel server address [tunnel.rustunnel.com:4040]:
+Auth token (leave blank to skip): rt_live_abc123...
+
+Created: /Users/you/.rustunnel/config.yml
+Run `rustunnel start` to connect using this config.
+```
+
+After running setup, use `rustunnel start` to connect with all tunnels defined in the config, or use `rustunnel http <port>` / `rustunnel tcp <port>` for one-off tunnels.
 
 ### Quick start (CLI flags)
 

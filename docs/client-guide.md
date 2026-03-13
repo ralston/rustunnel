@@ -10,6 +10,7 @@
 2. [Quick Start](#quick-start)
 3. [Configuration File](#configuration-file)
 4. [Commands](#commands)
+   - [setup — Interactive config wizard](#setup--interactive-config-wizard)
    - [http — HTTP tunnel](#http--http-tunnel)
    - [tcp — TCP tunnel](#tcp--tcp-tunnel)
    - [start — Multi-tunnel mode](#start--multi-tunnel-mode)
@@ -53,12 +54,9 @@ rustunnel --version
 ## Quick Start
 
 ```bash
-# 1. Create a config file
-mkdir -p ~/.rustunnel
-cat > ~/.rustunnel/config.yml <<EOF
-server: tunnel.example.com:9000
-auth_token: YOUR_TOKEN_HERE
-EOF
+# 1. Create a config file interactively
+rustunnel setup
+# → prompts for server address and auth token, writes ~/.rustunnel/config.yml
 
 # 2. Expose a local web server running on port 3000
 rustunnel http 3000
@@ -132,6 +130,66 @@ tunnels:
 ---
 
 ## Commands
+
+### `setup` — Interactive config wizard
+
+Create (or overwrite) `~/.rustunnel/config.yml` through a guided prompt sequence.
+
+```
+rustunnel setup
+```
+
+**Prompts:**
+
+| Prompt | Default | Description |
+|--------|---------|-------------|
+| Server address | `tunnel.rustunnel.com:4040` | The control-plane host:port to connect to |
+| Auth token | _(blank)_ | Token issued by the server; leave empty to fill in later |
+
+**Behaviour:**
+
+- Creates `~/.rustunnel/` if the directory doesn't exist.
+- If a config file already exists it is overwritten — a backup is not kept, so copy the old file first if you want to preserve it.
+- Writes a commented `tunnels:` block with HTTP and TCP examples so you can see the structure right away.
+- Prints `Created:` or `Updated:` with the full path when done.
+
+**Example session:**
+
+```
+rustunnel setup — create ~/.rustunnel/config.yml
+
+Tunnel server address [tunnel.rustunnel.com:4040]:
+Auth token (leave blank to skip): rt_live_abc123xyz
+
+Created: /Users/alice/.rustunnel/config.yml
+Run `rustunnel start` to connect using this config.
+```
+
+**Generated file:**
+
+```yaml
+# rustunnel configuration
+# Documentation: https://github.com/joaoh82/rustunnel
+
+server: tunnel.rustunnel.com:4040
+auth_token: rt_live_abc123xyz
+
+# tunnels:
+#   web:
+#     proto: http
+#     local_port: 3000
+#   api:
+#     proto: http
+#     local_port: 8080
+#     subdomain: myapi
+#   database:
+#     proto: tcp
+#     local_port: 5432
+```
+
+After running `setup`, uncomment and fill in the `tunnels:` section then run `rustunnel start`, or use `rustunnel http <port>` / `rustunnel tcp <port>` directly.
+
+---
 
 ### `http` — HTTP tunnel
 
@@ -292,6 +350,8 @@ This table summarises all flags across all commands:
 | `--admin-token <token>` | token create | Admin token for dashboard API |
 | `--version` | all | Print version and exit |
 | `--help` | all | Print help and exit |
+
+`setup` takes no flags — all input is collected interactively.
 
 ---
 

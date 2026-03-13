@@ -65,6 +65,7 @@ This document tracks the features that have already shipped and ideas planned fo
 - [x] Pre-push git hook mirroring CI checks (`make install-hooks`)
 - [x] Local development config (`deploy/local/server.toml`) and self-signed cert setup instructions
 - [x] Pre-built release binaries for Linux (x86_64, aarch64) and macOS via GitHub Releases
+- [x] `rustunnel setup` — interactive wizard that creates `~/.rustunnel/config.yml` with prompted server and auth token values
 
 ### AI agent integration (Phase 1)
 - [x] `rustunnel-mcp` binary — MCP server with stdio transport
@@ -85,6 +86,7 @@ Items below are not committed to any release timeline. They represent directions
 - [ ] Shell completions for the CLI (bash, zsh, fish)
 - [ ] `rustunnel status` command to inspect the active connection and registered tunnels
 - [ ] Extended Prometheus metrics (bytes proxied, request latency histograms, error rates)
+- [ ] `rustunnel setup --update` flag to edit an existing config file non-destructively
 
 ### AI agent integration (Phase 2 — x402 payments)
 - [ ] x402 middleware on `POST /api/tokens` — gate token creation behind USDC micropayment
