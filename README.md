@@ -537,8 +537,10 @@ brew tap joaoh82/rustunnel
 brew install rustunnel
 ```
 
-Homebrew installs a pre-built binary — no Rust toolchain required.
-The formula is updated automatically on every release.
+Homebrew installs pre-built binaries — no Rust toolchain required.
+The formula is updated automatically on every release. This installs
+both `rustunnel` (the CLI client) and `rustunnel-mcp` (the MCP server
+for AI agent integration).
 
 **Option 2 — Pre-built binary**
 
@@ -781,6 +783,15 @@ without any manual intervention.
 | `get_tunnel_history` | Retrieve past tunnel activity |
 
 ### Installation
+
+**Homebrew (macOS and Linux)** — installs `rustunnel-mcp` alongside the CLI:
+
+```bash
+brew tap joaoh82/rustunnel
+brew install rustunnel
+```
+
+**Build from source:**
 
 ```bash
 make release-mcp
