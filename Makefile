@@ -1,4 +1,4 @@
-.PHONY: build test fmt lint check install-hooks release release-server release-client \
+.PHONY: build build-full test fmt lint check install-hooks release release-server release-client \
         docker-build docker-run docker-run-monitoring docker-stop docker-logs \
         deploy deploy-client update-server clean help
 
@@ -14,6 +14,10 @@ TAG           ?= latest
 ## build        Compile all workspace crates (debug).
 build:
 	cargo build --workspace
+
+## build-full   Rebuild dashboard UI then compile the server (use after UI changes).
+build-full: ui-build
+	cargo build -p rustunnel-server
 
 ## test         Run the full test suite (unit + integration).
 test:
