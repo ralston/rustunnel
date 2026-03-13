@@ -1,11 +1,12 @@
 .PHONY: build build-full test fmt lint check install-hooks release release-server release-client \
-        docker-build docker-run docker-run-monitoring docker-stop docker-logs \
+        release-mcp docker-build docker-run docker-run-monitoring docker-stop docker-logs \
         deploy deploy-client update-server clean help
 
 # ── configuration ─────────────────────────────────────────────────────────────
 
 BINARY_SERVER := rustunnel-server
 BINARY_CLIENT := rustunnel
+BINARY_MCP    := rustunnel-mcp
 IMAGE         := rustunnel-server
 TAG           ?= latest
 
@@ -57,8 +58,8 @@ ui-build:
 
 ## release      Build optimised release binaries (runs ui-build first).
 release: ui-build
-	cargo build --release -p rustunnel-server -p rustunnel-client
-	@echo "Binaries: target/release/$(BINARY_SERVER)  target/release/$(BINARY_CLIENT)"
+	cargo build --release -p rustunnel-server -p rustunnel-client -p rustunnel-mcp
+	@echo "Binaries: target/release/$(BINARY_SERVER)  target/release/$(BINARY_CLIENT)  target/release/$(BINARY_MCP)"
 
 ## release-server  Build only the server in release mode.
 release-server:
@@ -67,6 +68,10 @@ release-server:
 ## release-client  Build only the client in release mode.
 release-client:
 	cargo build --release -p rustunnel-client
+
+## release-mcp     Build only the MCP server in release mode.
+release-mcp:
+	cargo build --release -p rustunnel-mcp
 
 # ── docker ────────────────────────────────────────────────────────────────────
 

@@ -40,6 +40,7 @@ You can self-host or use our managed service.
 - [Port reference](#port-reference)
 - [Config file reference (server)](#config-file-reference-server)
 - [REST API](#rest-api)
+- [AI agent integration (MCP server)](#ai-agent-integration-mcp-server)
 - [Monitoring](#monitoring)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -536,8 +537,10 @@ brew tap joaoh82/rustunnel
 brew install rustunnel
 ```
 
-Homebrew installs a pre-built binary — no Rust toolchain required.
-The formula is updated automatically on every release.
+Homebrew installs pre-built binaries — no Rust toolchain required.
+The formula is updated automatically on every release. This installs
+both `rustunnel` (the CLI client) and `rustunnel-mcp` (the MCP server
+for AI agent integration).
 
 **Option 2 — Pre-built binary**
 
@@ -741,6 +744,62 @@ The dashboard port exposes a REST API for programmatic access to tunnels, tokens
 
 Full request/response schemas, query parameters, and examples are in
 [**docs/api-reference.md**](docs/api-reference.md).
+
+A machine-readable OpenAPI 3.0 spec is served at `GET /api/openapi.json` (no auth required).
+
+---
+
+## AI agent integration (MCP server)
+
+rustunnel ships a `rustunnel-mcp` binary that implements the
+[Model Context Protocol](https://spec.modelcontextprotocol.io) over stdio,
+letting AI agents (Claude, GPT-4o, custom agents) open and manage tunnels
+without any manual intervention.
+
+### Quick setup (Claude Desktop)
+
+```json
+{
+  "mcpServers": {
+    "rustunnel": {
+      "command": "rustunnel-mcp",
+      "args": [
+        "--server", "tunnel.example.com:4040",
+        "--api",    "https://tunnel.example.com:8443"
+      ]
+    }
+  }
+}
+```
+
+### Available tools
+
+| Tool | Description |
+|------|-------------|
+| `create_tunnel` | Spawn a tunnel and return the public URL |
+| `list_tunnels` | List all active tunnels |
+| `close_tunnel` | Force-close a tunnel by ID |
+| `get_connection_info` | Return the CLI command for cloud/sandbox agents |
+| `get_tunnel_history` | Retrieve past tunnel activity |
+
+### Installation
+
+**Homebrew (macOS and Linux)** — installs `rustunnel-mcp` alongside the CLI:
+
+```bash
+brew tap joaoh82/rustunnel
+brew install rustunnel
+```
+
+**Build from source:**
+
+```bash
+make release-mcp
+sudo install -m755 target/release/rustunnel-mcp /usr/local/bin/rustunnel-mcp
+```
+
+Full setup guide, configuration options, and workflow examples are in
+[**docs/mcp-server.md**](docs/mcp-server.md).
 
 ---
 
