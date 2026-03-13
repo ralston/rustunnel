@@ -30,6 +30,7 @@ class Rustunnel < Formula
 
   def install
     bin.install "rustunnel"
+    bin.install "rustunnel-mcp"
   end
 
   test do
