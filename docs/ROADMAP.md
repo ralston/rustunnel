@@ -66,6 +66,15 @@ This document tracks the features that have already shipped and ideas planned fo
 - [x] Local development config (`deploy/local/server.toml`) and self-signed cert setup instructions
 - [x] Pre-built release binaries for Linux (x86_64, aarch64) and macOS via GitHub Releases
 
+### AI agent integration (Phase 1)
+- [x] `rustunnel-mcp` binary — MCP server with stdio transport
+- [x] `create_tunnel` tool — spawns `rustunnel` CLI subprocess and polls API for the public URL
+- [x] `list_tunnels` tool — REST wrapper for `GET /api/tunnels`
+- [x] `close_tunnel` tool — REST wrapper for `DELETE /api/tunnels/:id` + kills spawned process
+- [x] `get_connection_info` tool — returns CLI command for cloud/sandbox agents
+- [x] `get_tunnel_history` tool — REST wrapper for `GET /api/history`
+- [x] `GET /api/openapi.json` — machine-readable API spec for agent discovery
+
 ---
 
 ## Planned / Ideas
@@ -76,6 +85,18 @@ Items below are not committed to any release timeline. They represent directions
 - [ ] Shell completions for the CLI (bash, zsh, fish)
 - [ ] `rustunnel status` command to inspect the active connection and registered tunnels
 - [ ] Extended Prometheus metrics (bytes proxied, request latency histograms, error rates)
+
+### AI agent integration (Phase 2 — x402 payments)
+- [ ] x402 middleware on `POST /api/tokens` — gate token creation behind USDC micropayment
+- [ ] Token TTL + tier metadata (`expires_at`, `tier`, `tunnel_limit` columns)
+- [ ] Token expiry enforcement at tunnel registration time
+- [ ] `purchase_tunnel_pass` MCP tool — drives x402 payment flow using agent's wallet
+- [ ] Coinbase facilitator integration for on-chain payment verification
+
+### AI agent integration (Phase 3 — remote MCP + metering)
+- [ ] Streamable HTTP transport — deploy MCP server as `mcp.tunnel.example.com`
+- [ ] OAuth 2.1 on the remote MCP endpoint
+- [ ] `GET /api/usage` — tunnel-hours, bytes, request counts per token
 
 ### Medium-term
 - [ ] Token RBAC — enforce scope restrictions (e.g. `http-only`, `tcp-only`, read-only dashboard)
@@ -105,3 +126,4 @@ Items below are not committed to any release timeline. They represent directions
 |---------|-----------|
 | 0.1.0 | Initial release — HTTP/TCP tunnels, TLS, admin token auth, dashboard, Prometheus metrics |
 | 0.2.0 | API token management (create/list/delete), tunnel activity log, per-token tunnel counts |
+| 0.3.0 | Tunnel history dashboard page, stale tunnel cleanup on restart, MCP server (Phase 1), OpenAPI spec |

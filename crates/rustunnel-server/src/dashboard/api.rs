@@ -60,6 +60,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         // public
         .route("/api/status", get(status_handler))
+        .route("/api/openapi.json", get(openapi_spec))
         // authenticated
         .route("/api/tunnels", get(list_tunnels))
         .route("/api/tunnels/:id", get(get_tunnel))
@@ -489,6 +490,155 @@ async fn delete_token(
         )
             .into_response(),
     }
+}
+
+// ── OpenAPI spec ──────────────────────────────────────────────────────────────
+
+/// `GET /api/openapi.json` — machine-readable description of the REST API.
+///
+/// Returned without authentication so that AI agents and developer tooling can
+/// discover available endpoints before obtaining a token.
+async fn openapi_spec() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "openapi": "3.0.3",
+        "info": {
+            "title": "rustunnel REST API",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "REST API for managing tunnels, tokens, and viewing tunnel history."
+        },
+        "servers": [
+            { "url": "/", "description": "This server" }
+        ],
+        "paths": {
+            "/api/status": {
+                "get": {
+                    "summary": "Server health check",
+                    "operationId": "getStatus",
+                    "security": [],
+                    "responses": {
+                        "200": {
+                            "description": "Server is healthy",
+                            "content": { "application/json": { "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "ok":              { "type": "boolean" },
+                                    "active_sessions": { "type": "integer" },
+                                    "active_tunnels":  { "type": "integer" }
+                                }
+                            }}}
+                        }
+                    }
+                }
+            },
+            "/api/tunnels": {
+                "get": {
+                    "summary": "List all active tunnels",
+                    "operationId": "listTunnels",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": { "description": "Array of tunnel objects" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/tunnels/{id}": {
+                "get": {
+                    "summary": "Get a single tunnel by UUID",
+                    "operationId": "getTunnel",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "200": { "description": "Tunnel object" },
+                        "404": { "description": "Not found" }
+                    }
+                },
+                "delete": {
+                    "summary": "Force-close an active tunnel",
+                    "operationId": "closeTunnel",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "204": { "description": "Tunnel removed" },
+                        "404": { "description": "Not found" }
+                    }
+                }
+            },
+            "/api/tunnels/{id}/requests": {
+                "get": {
+                    "summary": "List recent captured HTTP requests for a tunnel",
+                    "operationId": "tunnelRequests",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id",    "in": "path",  "required": true,  "schema": { "type": "string" } },
+                        { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50 } }
+                    ],
+                    "responses": { "200": { "description": "Array of captured request objects" } }
+                }
+            },
+            "/api/tokens": {
+                "get": {
+                    "summary": "List all API tokens",
+                    "operationId": "listTokens",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": { "200": { "description": "Array of token objects" } }
+                },
+                "post": {
+                    "summary": "Create a new API token",
+                    "operationId": "createToken",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "application/json": { "schema": {
+                            "type": "object",
+                            "properties": {
+                                "label": { "type": "string" },
+                                "scope": { "type": "string", "nullable": true }
+                            },
+                            "required": ["label"]
+                        }}}
+                    },
+                    "responses": {
+                        "201": { "description": "Token created — raw value shown once" },
+                        "401": { "description": "Unauthorized" }
+                    }
+                }
+            },
+            "/api/tokens/{id}": {
+                "delete": {
+                    "summary": "Delete an API token",
+                    "operationId": "deleteToken",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "responses": {
+                        "204": { "description": "Token deleted" },
+                        "404": { "description": "Not found" }
+                    }
+                }
+            },
+            "/api/history": {
+                "get": {
+                    "summary": "Paginated tunnel registration history",
+                    "operationId": "getTunnelHistory",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "limit",    "in": "query", "schema": { "type": "integer", "default": 50 } },
+                        { "name": "offset",   "in": "query", "schema": { "type": "integer", "default": 0 } },
+                        { "name": "protocol", "in": "query", "schema": { "type": "string", "enum": ["http","tcp"] } }
+                    ],
+                    "responses": { "200": { "description": "{ total, entries[] }" } }
+                }
+            }
+        },
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Admin token or API token created via POST /api/tokens"
+                }
+            }
+        }
+    }))
 }
 
 // ── tunnel history ────────────────────────────────────────────────────────────

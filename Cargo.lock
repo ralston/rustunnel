@@ -2214,6 +2214,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustunnel-mcp"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rustunnel-protocol"
 version = "0.1.0"
 dependencies = [
