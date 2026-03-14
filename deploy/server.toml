@@ -67,9 +67,14 @@ require_auth = true
 
 # ── Database ──────────────────────────────────────────────────────────────────
 [database]
-# SQLite file.  The /var/lib/rustunnel directory is owned by the rustunnel
-# system user and is created by `make deploy` or the steps in README.md.
-path = "/var/lib/rustunnel/rustunnel.db"
+# PostgreSQL connection URL for shared data (tokens, tunnel history).
+# The DB server's private IP is used — traffic stays on the Hetzner private network.
+# TODO: replace with your actual DB password.
+url = "postgresql://rustunnel:CHANGE_ME@10.0.0.3:5432/rustunnel"
+
+# Per-region SQLite file for captured HTTP request data.
+# Persisted in the rustunnel-data Docker volume across restarts.
+captured_path = "/var/lib/rustunnel/captured.db"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 [logging]

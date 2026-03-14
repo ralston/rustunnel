@@ -28,9 +28,7 @@ use crate::audit::{AuditEvent, AuditTx};
 use crate::config::ServerConfig;
 use crate::control::mux::MuxSession;
 use crate::core::{ControlMessage, TunnelCore};
-use sqlx::SqlitePool;
-
-use crate::db;
+use crate::db::{self, Db};
 use crate::error::{Error, Result};
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -50,7 +48,7 @@ struct SessionCtx<'a> {
     core: &'a Arc<TunnelCore>,
     config: &'a Arc<ServerConfig>,
     audit_tx: &'a AuditTx,
-    pool: &'a SqlitePool,
+    db: &'a Db,
     db_token_id: Option<String>,
 }
 
@@ -62,11 +60,11 @@ pub async fn handle_session<S>(
     core: Arc<TunnelCore>,
     config: Arc<ServerConfig>,
     audit_tx: AuditTx,
-    pool: SqlitePool,
+    db: Db,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    match run_session(ws, peer_addr, &core, &config, &audit_tx, &pool).await {
+    match run_session(ws, peer_addr, &core, &config, &audit_tx, &db).await {
         Ok(()) => tracing::info!(%peer_addr, "session ended cleanly"),
         Err(e) => tracing::warn!(%peer_addr, "session error: {e}"),
     }
@@ -80,7 +78,7 @@ async fn run_session<S>(
     core: &Arc<TunnelCore>,
     config: &Arc<ServerConfig>,
     audit_tx: &AuditTx,
-    pool: &SqlitePool,
+    db: &Db,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -90,7 +88,7 @@ where
 
     // Auth.
     let (mut ws, session_id, db_token_id) =
-        auth_handshake(ws, peer_addr, core, config, ctrl_tx, audit_tx, pool).await?;
+        auth_handshake(ws, peer_addr, core, config, ctrl_tx, audit_tx, db).await?;
 
     tracing::info!(%peer_addr, %session_id, "session authenticated");
 
@@ -183,7 +181,7 @@ where
         core,
         config,
         audit_tx,
-        pool,
+        db,
         db_token_id,
     };
     let result = main_loop(
@@ -205,7 +203,7 @@ where
         .map(|s| s.tunnels.iter().map(|id| id.to_string()).collect())
         .unwrap_or_default();
     for tid in &remaining {
-        let _ = db::log_tunnel_unregistered(pool, tid).await;
+        let _ = db::log_tunnel_unregistered(&db.pg, tid).await;
     }
 
     core.remove_session(&session_id);
@@ -223,7 +221,7 @@ async fn auth_handshake<S>(
     config: &Arc<ServerConfig>,
     ctrl_tx: mpsc::Sender<ControlMessage>,
     audit_tx: &AuditTx,
-    pool: &SqlitePool,
+    db: &Db,
 ) -> Result<(WebSocketStream<S>, Uuid, Option<String>)>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -265,7 +263,7 @@ where
 
     if !config.auth.require_auth {
         // Auth disabled — still try to resolve the DB token ID for tracking.
-        db_token_id = db::verify_token(pool, &token)
+        db_token_id = db::verify_token(&db.pg, &token)
             .await
             .ok()
             .flatten()
@@ -275,7 +273,7 @@ where
         db_token_id = None;
         authed = true;
     } else {
-        match db::verify_token(pool, &token).await {
+        match db::verify_token(&db.pg, &token).await {
             Ok(Some(t)) => {
                 db_token_id = Some(t.id);
                 authed = true;
@@ -413,7 +411,7 @@ where
         core,
         config,
         audit_tx,
-        pool,
+        db,
         db_token_id,
     } = ctx;
     let session_id = *session_id;
@@ -448,7 +446,7 @@ where
                                 label: sub.clone(),
                             });
                             let _ = db::log_tunnel_registered(
-                                pool,
+                                &db.pg,
                                 &tunnel_id.to_string(),
                                 &proto_str,
                                 &sub,
@@ -490,7 +488,7 @@ where
                             label: port_str.clone(),
                         });
                         let _ = db::log_tunnel_registered(
-                            pool,
+                            &db.pg,
                             &tunnel_id.to_string(),
                             "tcp",
                             &port_str,
@@ -529,7 +527,7 @@ where
                 tunnel_id: tunnel_id.to_string(),
                 label: String::new(),
             });
-            let _ = db::log_tunnel_unregistered(pool, &tunnel_id.to_string()).await;
+            let _ = db::log_tunnel_unregistered(&db.pg, &tunnel_id.to_string()).await;
             core.remove_tunnel(&tunnel_id);
         }
 

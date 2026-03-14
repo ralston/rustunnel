@@ -28,8 +28,11 @@ admin_token  = "dev-secret-change-me"
 require_auth = false
 
 [database]
-# Persisted in a named Docker volume.
-path = "/var/lib/rustunnel/rustunnel.db"
+# PostgreSQL connection URL (shared tokens + tunnel history).
+# For local dev you can run a local Postgres or point at the DB VPS over the private network.
+url = "postgresql://rustunnel:CHANGE_ME@10.0.0.3:5432/rustunnel"
+# Per-region SQLite for captured HTTP request data (persisted in a named Docker volume).
+captured_path = "/var/lib/rustunnel/captured.db"
 
 [logging]
 level  = "debug"

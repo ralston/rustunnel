@@ -81,8 +81,17 @@ pub struct AuthSection {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSection {
-    /// Filesystem path for the embedded database (e.g. SQLite file)
-    pub path: String,
+    /// PostgreSQL connection URL for shared data (tokens, tunnel_log).
+    /// e.g. "postgresql://rustunnel:password@10.0.0.3:5432/rustunnel"
+    pub url: String,
+
+    /// Local SQLite file path for per-region captured request data.
+    #[serde(default = "default_captured_db_path")]
+    pub captured_path: String,
+}
+
+fn default_captured_db_path() -> String {
+    "/var/lib/rustunnel/captured.db".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -159,7 +168,10 @@ impl Default for ServerConfig {
                 require_auth: false,
             },
             database: DatabaseSection {
-                path: ":memory:".to_string(),
+                url: std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+                    "postgres://rustunnel:test@localhost:5432/rustunnel_test".to_string()
+                }),
+                captured_path: ":memory:".to_string(),
             },
             logging: LoggingSection {
                 level: "info".to_string(),

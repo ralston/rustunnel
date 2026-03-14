@@ -22,9 +22,9 @@ use crate::audit::AuditTx;
 use crate::config::ServerConfig;
 use crate::control::session::{handle_data_connection, handle_session};
 use crate::core::TunnelCore;
+use crate::db::Db;
 use crate::error::Result;
 use crate::net::bind_reuse;
-use sqlx::SqlitePool;
 
 /// Start the control-plane listener.
 ///
@@ -45,7 +45,7 @@ pub async fn run_control_plane(
     config: Arc<ServerConfig>,
     tls_config: Arc<ArcSwap<RustlsConfig>>,
     audit_tx: AuditTx,
-    pool: SqlitePool,
+    db: Db,
 ) -> Result<()> {
     let listener = bind_reuse(addr)?;
     tracing::info!(%addr, "control plane listening");
@@ -69,7 +69,7 @@ pub async fn run_control_plane(
         let core = core.clone();
         let config = config.clone();
         let audit_tx = audit_tx.clone();
-        let pool = pool.clone();
+        let db = db.clone();
 
         tokio::spawn(async move {
             // TLS handshake.
@@ -100,7 +100,7 @@ pub async fn run_control_plane(
 
             // Route based on path.
             if captured_path == "/_control" {
-                handle_session(ws_stream, peer_addr, core, config, audit_tx, pool).await;
+                handle_session(ws_stream, peer_addr, core, config, audit_tx, db).await;
             } else if let Some(id_str) = captured_path.strip_prefix("/_data/") {
                 match Uuid::parse_str(id_str) {
                     Ok(session_id) => {

@@ -1,91 +1,58 @@
-//! SQLite database pool and schema initialisation.
+//! Database pools and schema initialisation.
+//!
+//! Two pools:
+//!   - `pg`    — PostgreSQL, shared across all regions: tokens, tunnel_log
+//!   - `local` — SQLite, per-region: captured_requests
 
 pub mod models;
 
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::str::FromStr;
 
+use crate::config::DatabaseSection;
 use crate::error::Result;
 
-/// Initialise the SQLite connection pool and run the embedded migrations.
-pub async fn init_pool(database_url: &str) -> Result<SqlitePool> {
-    // Support both bare file paths and sqlite:// URIs.
-    let url = if database_url.starts_with("sqlite:") {
-        database_url.to_string()
-    } else {
-        format!("sqlite:{database_url}")
-    };
-
-    let opts = SqliteConnectOptions::from_str(&url)?
-        .create_if_missing(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .foreign_keys(true);
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(opts)
-        .await?;
-
-    migrate(&pool).await?;
-    Ok(pool)
+/// Dual-pool database handle.  Cheap to clone (both pools are Arc-backed).
+#[derive(Clone)]
+pub struct Db {
+    /// Shared PostgreSQL pool — tokens, tunnel_log.
+    pub pg: PgPool,
+    /// Local SQLite pool — captured_requests.
+    pub local: SqlitePool,
 }
 
-/// Create tables if they do not yet exist.
-async fn migrate(pool: &SqlitePool) -> Result<()> {
-    // Idempotent schema — safe to run on every startup.
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS tokens (
-            id           TEXT PRIMARY KEY,
-            token_hash   TEXT NOT NULL UNIQUE,
-            label        TEXT NOT NULL,
-            created_at   TEXT NOT NULL,
-            last_used_at TEXT,
-            scope        TEXT
-        );
+/// Initialise both pools and run migrations on each.
+pub async fn init_db(config: &DatabaseSection) -> Result<Db> {
+    // ── PostgreSQL ────────────────────────────────────────────────────────────
+    let pg = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.url)
+        .await?;
 
-        CREATE TABLE IF NOT EXISTS tunnel_log (
-            id               TEXT PRIMARY KEY,
-            tunnel_id        TEXT NOT NULL,
-            protocol         TEXT NOT NULL,
-            label            TEXT NOT NULL,
-            session_id       TEXT NOT NULL,
-            registered_at    TEXT NOT NULL,
-            unregistered_at  TEXT
-        );
+    sqlx::migrate!("migrations/pg").run(&pg).await?;
 
-        CREATE TABLE IF NOT EXISTS captured_requests (
-            id             TEXT PRIMARY KEY,
-            tunnel_id      TEXT NOT NULL,
-            conn_id        TEXT NOT NULL,
-            method         TEXT NOT NULL,
-            path           TEXT NOT NULL,
-            status         INTEGER NOT NULL,
-            request_bytes  INTEGER NOT NULL DEFAULT 0,
-            response_bytes INTEGER NOT NULL DEFAULT 0,
-            duration_ms    INTEGER NOT NULL DEFAULT 0,
-            captured_at    TEXT NOT NULL,
-            request_body   TEXT,
-            response_body  TEXT
-        );
+    // ── SQLite (local captured_requests) ──────────────────────────────────────
+    let sqlite_url =
+        if config.captured_path.starts_with("sqlite:") || config.captured_path == ":memory:" {
+            config.captured_path.clone()
+        } else {
+            format!("sqlite:{}", config.captured_path)
+        };
 
-        CREATE INDEX IF NOT EXISTS idx_captured_tunnel ON captured_requests (tunnel_id, captured_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_tunnel_log_id   ON tunnel_log (tunnel_id);
-        "#,
-    )
-    .execute(pool)
-    .await?;
+    let local = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(
+            SqliteConnectOptions::from_str(&sqlite_url)?
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .foreign_keys(true),
+        )
+        .await?;
 
-    // Additive column migrations — errors are ignored because the column may
-    // already exist on databases created after these were added.
-    let _ = sqlx::query("ALTER TABLE tokens ADD COLUMN scope TEXT")
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("ALTER TABLE tunnel_log ADD COLUMN token_id TEXT")
-        .execute(pool)
-        .await;
+    sqlx::migrate!("migrations/local").run(&local).await?;
 
-    Ok(())
+    Ok(Db { pg, local })
 }
 
 // ── token helpers ─────────────────────────────────────────────────────────────
@@ -104,11 +71,8 @@ pub fn hash_token(raw: &str) -> String {
 }
 
 /// Insert a new token record.  Returns the raw (unhashed) token string.
-///
-/// `scope` is an optional comma-separated list of subdomain patterns.
-/// `None` means the token is unrestricted.
 pub async fn create_token(
-    pool: &SqlitePool,
+    pool: &PgPool,
     label: &str,
     scope: Option<&str>,
 ) -> Result<(Token, String)> {
@@ -118,12 +82,13 @@ pub async fn create_token(
     let now = Utc::now();
 
     sqlx::query(
-        "INSERT INTO tokens (id, token_hash, label, created_at, scope) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO tokens (id, token_hash, label, created_at, scope) \
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(&id)
     .bind(&hash)
     .bind(label)
-    .bind(now.to_rfc3339())
+    .bind(now)
     .bind(scope)
     .execute(pool)
     .await?;
@@ -140,19 +105,19 @@ pub async fn create_token(
 }
 
 /// Return `Some(Token)` if the hash matches a known token, updating `last_used_at`.
-pub async fn verify_token(pool: &SqlitePool, raw: &str) -> Result<Option<Token>> {
+pub async fn verify_token(pool: &PgPool, raw: &str) -> Result<Option<Token>> {
     let hash = hash_token(raw);
     let token: Option<Token> = sqlx::query_as(
         "SELECT id, token_hash, label, created_at, last_used_at, scope \
-         FROM tokens WHERE token_hash = ?",
+         FROM tokens WHERE token_hash = $1",
     )
     .bind(&hash)
     .fetch_optional(pool)
     .await?;
 
     if let Some(ref t) = token {
-        sqlx::query("UPDATE tokens SET last_used_at = ? WHERE id = ?")
-            .bind(Utc::now().to_rfc3339())
+        sqlx::query("UPDATE tokens SET last_used_at = $1 WHERE id = $2")
+            .bind(Utc::now())
             .bind(&t.id)
             .execute(pool)
             .await?;
@@ -162,8 +127,8 @@ pub async fn verify_token(pool: &SqlitePool, raw: &str) -> Result<Option<Token>>
 }
 
 /// Delete a token by id.
-pub async fn delete_token(pool: &SqlitePool, id: &str) -> Result<bool> {
-    let rows = sqlx::query("DELETE FROM tokens WHERE id = ?")
+pub async fn delete_token(pool: &PgPool, id: &str) -> Result<bool> {
+    let rows = sqlx::query("DELETE FROM tokens WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?
@@ -172,7 +137,7 @@ pub async fn delete_token(pool: &SqlitePool, id: &str) -> Result<bool> {
 }
 
 /// List all tokens with their historical tunnel registration counts.
-pub async fn list_tokens_with_counts(pool: &SqlitePool) -> Result<Vec<TokenWithCount>> {
+pub async fn list_tokens_with_counts(pool: &PgPool) -> Result<Vec<TokenWithCount>> {
     let rows: Vec<TokenWithCount> = sqlx::query_as(
         "SELECT t.id, t.token_hash, t.label, t.created_at, t.last_used_at, t.scope, \
                 COALESCE(COUNT(tl.id), 0) AS tunnel_count \
@@ -190,7 +155,7 @@ pub async fn list_tokens_with_counts(pool: &SqlitePool) -> Result<Vec<TokenWithC
 
 /// Insert a tunnel_log row when a tunnel is registered.
 pub async fn log_tunnel_registered(
-    pool: &SqlitePool,
+    pool: &PgPool,
     tunnel_id: &str,
     protocol: &str,
     label: &str,
@@ -199,8 +164,9 @@ pub async fn log_tunnel_registered(
 ) -> Result<()> {
     let id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO tunnel_log (id, tunnel_id, protocol, label, session_id, token_id, registered_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tunnel_log \
+             (id, tunnel_id, protocol, label, session_id, token_id, registered_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(&id)
     .bind(tunnel_id)
@@ -208,7 +174,7 @@ pub async fn log_tunnel_registered(
     .bind(label)
     .bind(session_id)
     .bind(token_id)
-    .bind(Utc::now().to_rfc3339())
+    .bind(Utc::now())
     .execute(pool)
     .await?;
     Ok(())
@@ -218,10 +184,10 @@ pub async fn log_tunnel_registered(
 ///
 /// Called once on server startup to mark tunnels from previous runs as closed,
 /// since their WebSocket connections no longer exist.
-pub async fn close_stale_tunnels(pool: &SqlitePool) -> Result<u64> {
+pub async fn close_stale_tunnels(pool: &PgPool) -> Result<u64> {
     let rows =
-        sqlx::query("UPDATE tunnel_log SET unregistered_at = ? WHERE unregistered_at IS NULL")
-            .bind(Utc::now().to_rfc3339())
+        sqlx::query("UPDATE tunnel_log SET unregistered_at = $1 WHERE unregistered_at IS NULL")
+            .bind(Utc::now())
             .execute(pool)
             .await?
             .rows_affected();
@@ -229,12 +195,12 @@ pub async fn close_stale_tunnels(pool: &SqlitePool) -> Result<u64> {
 }
 
 /// Set `unregistered_at` on the tunnel_log row for `tunnel_id`.
-pub async fn log_tunnel_unregistered(pool: &SqlitePool, tunnel_id: &str) -> Result<()> {
+pub async fn log_tunnel_unregistered(pool: &PgPool, tunnel_id: &str) -> Result<()> {
     sqlx::query(
-        "UPDATE tunnel_log SET unregistered_at = ? \
-         WHERE tunnel_id = ? AND unregistered_at IS NULL",
+        "UPDATE tunnel_log SET unregistered_at = $1 \
+         WHERE tunnel_id = $2 AND unregistered_at IS NULL",
     )
-    .bind(Utc::now().to_rfc3339())
+    .bind(Utc::now())
     .bind(tunnel_id)
     .execute(pool)
     .await?;
@@ -244,10 +210,8 @@ pub async fn log_tunnel_unregistered(pool: &SqlitePool, tunnel_id: &str) -> Resu
 // ── tunnel history helpers ────────────────────────────────────────────────────
 
 /// Return a page of tunnel history rows, newest first.
-///
-/// `protocol` filters to `"http"` or `"tcp"` when provided.
 pub async fn list_tunnel_history(
-    pool: &SqlitePool,
+    pool: &PgPool,
     limit: i64,
     offset: i64,
     protocol: Option<&str>,
@@ -259,9 +223,9 @@ pub async fn list_tunnel_history(
                     tl.registered_at, tl.unregistered_at \
              FROM tunnel_log tl \
              LEFT JOIN tokens t ON t.id = tl.token_id \
-             WHERE tl.protocol = ? \
+             WHERE tl.protocol = $1 \
              ORDER BY tl.registered_at DESC \
-             LIMIT ? OFFSET ?",
+             LIMIT $2 OFFSET $3",
         )
         .bind(proto)
         .bind(limit)
@@ -276,7 +240,7 @@ pub async fn list_tunnel_history(
              FROM tunnel_log tl \
              LEFT JOIN tokens t ON t.id = tl.token_id \
              ORDER BY tl.registered_at DESC \
-             LIMIT ? OFFSET ?",
+             LIMIT $1 OFFSET $2",
         )
         .bind(limit)
         .bind(offset)
@@ -287,9 +251,9 @@ pub async fn list_tunnel_history(
 }
 
 /// Total number of tunnel_log rows matching an optional protocol filter.
-pub async fn count_tunnel_history(pool: &SqlitePool, protocol: Option<&str>) -> Result<i64> {
+pub async fn count_tunnel_history(pool: &PgPool, protocol: Option<&str>) -> Result<i64> {
     let count: (i64,) = if let Some(proto) = protocol {
-        sqlx::query_as("SELECT COUNT(*) FROM tunnel_log WHERE protocol = ?")
+        sqlx::query_as("SELECT COUNT(*) FROM tunnel_log WHERE protocol = $1")
             .bind(proto)
             .fetch_one(pool)
             .await?

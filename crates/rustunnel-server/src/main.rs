@@ -95,9 +95,9 @@ async fn main() {
 async fn run(config: Arc<ServerConfig>) -> Result<()> {
     // ── database ──────────────────────────────────────────────────────────────
 
-    info!(path = %config.database.path, "opening database");
-    let pool = db::init_pool(&config.database.path).await?;
-    let stale = db::close_stale_tunnels(&pool).await?;
+    info!(url = %config.database.url, "connecting to PostgreSQL");
+    let db = db::init_db(&config.database).await?;
+    let stale = db::close_stale_tunnels(&db.pg).await?;
     if stale > 0 {
         info!(
             count = stale,
@@ -166,10 +166,10 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
         let cfg = Arc::clone(&config);
         let tls_handle = Arc::clone(&tls_handle);
         let audit_tx = audit_tx.clone();
-        let pool = pool.clone();
+        let db = db.clone();
         tokio::spawn(async move {
             if let Err(e) =
-                run_control_plane(control_addr, core, cfg, tls_handle, audit_tx, pool).await
+                run_control_plane(control_addr, core, cfg, tls_handle, audit_tx, db).await
             {
                 error!("control plane exited: {e}");
             }
@@ -216,19 +216,11 @@ async fn run(config: Arc<ServerConfig>) -> Result<()> {
 
     let h_dashboard = {
         let core = Arc::clone(&core);
-        let pool = pool.clone();
         let admin_token = config.auth.admin_token.clone();
         let audit_tx = audit_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_dashboard(
-                dashboard_addr,
-                core,
-                pool,
-                capture_rx,
-                admin_token,
-                audit_tx,
-            )
-            .await
+            if let Err(e) =
+                run_dashboard(dashboard_addr, core, db, capture_rx, admin_token, audit_tx).await
             {
                 error!("dashboard exited: {e}");
             }

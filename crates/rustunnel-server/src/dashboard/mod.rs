@@ -11,13 +11,13 @@ use std::sync::Arc;
 
 use axum::http::HeaderValue;
 use axum::Router;
-use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::info;
 
 use crate::audit::AuditTx;
 use crate::core::TunnelCore;
+use crate::db::Db;
 use crate::edge::capture::CaptureEvent;
 use crate::error::Result;
 
@@ -28,23 +28,23 @@ use capture::start_capture_service;
 ///
 /// * `addr`        — listen address (e.g. `0.0.0.0:4040`)
 /// * `core`        — shared tunnel routing state
-/// * `pool`        — SQLite pool (already migrated)
+/// * `db`          — dual-pool database handle (already migrated)
 /// * `capture_rx`  — receiver end of the capture channel from the HTTP edge
 /// * `admin_token` — admin bearer token from config
 /// * `audit_tx`    — audit event sender
 pub async fn run_dashboard(
     addr: SocketAddr,
     core: Arc<TunnelCore>,
-    pool: SqlitePool,
+    db: Db,
     capture_rx: mpsc::Receiver<CaptureEvent>,
     admin_token: String,
     audit_tx: AuditTx,
 ) -> Result<()> {
-    let capture_store = start_capture_service(capture_rx, pool.clone());
+    let capture_store = start_capture_service(capture_rx, db.local.clone());
 
     let state = ApiState {
         core,
-        pool,
+        db,
         capture: capture_store,
         admin_token,
         audit_tx,

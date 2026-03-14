@@ -43,6 +43,9 @@ pub enum Error {
 
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
+
+    #[error("migration error: {0}")]
+    Migrate(#[from] sqlx::migrate::MigrateError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -29,21 +29,20 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::{delete, get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 
 use crate::audit::{AuditEvent, AuditTx};
 use crate::core::TunnelCore;
 use crate::dashboard::capture::{load_requests_from_db, CaptureStore};
-use crate::db;
+use crate::db::{self, Db};
 
 // ── shared state ──────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct ApiState {
     pub core: Arc<TunnelCore>,
-    pub pool: SqlitePool,
+    pub db: Db,
     pub capture: CaptureStore,
     pub admin_token: String,
     pub audit_tx: AuditTx,
@@ -97,7 +96,7 @@ async fn require_auth(
         return Ok(());
     }
 
-    match db::verify_token(&state.pool, auth).await {
+    match db::verify_token(&state.db.pg, auth).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(unauthorized("invalid token")),
         Err(e) => {
@@ -337,7 +336,7 @@ async fn tunnel_requests(
     }
 
     // Fall back to DB.
-    match load_requests_from_db(&state.pool, &tunnel_id, q.limit).await {
+    match load_requests_from_db(&state.db.local, &tunnel_id, q.limit).await {
         Ok(rows) => Json(rows).into_response(),
         Err(e) => {
             warn!("DB query failed: {e}");
@@ -361,7 +360,7 @@ async fn replay_request(
         return e.into_response();
     }
 
-    match crate::dashboard::capture::get_request(&state.pool, &request_id).await {
+    match crate::dashboard::capture::get_request(&state.db.local, &request_id).await {
         Ok(Some(req)) if req.tunnel_id == tunnel_id => {
             // Return the stored request body as the replay payload.
             Json(req).into_response()
@@ -404,7 +403,7 @@ async fn list_tokens(headers: HeaderMap, State(state): State<ApiState>) -> impl 
         return e.into_response();
     }
 
-    match db::list_tokens_with_counts(&state.pool).await {
+    match db::list_tokens_with_counts(&state.db.pg).await {
         Ok(tokens) => Json(tokens).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -431,7 +430,7 @@ async fn create_token(
         .map(|t| t == state.admin_token)
         .unwrap_or(false);
 
-    match db::create_token(&state.pool, &body.label, body.scope.as_deref()).await {
+    match db::create_token(&state.db.pg, &body.label, body.scope.as_deref()).await {
         Ok((token_record, raw)) => {
             let _ = state.audit_tx.try_send(AuditEvent::TokenCreated {
                 token_id: token_record.id.clone(),
@@ -473,7 +472,7 @@ async fn delete_token(
         .map(|t| t == state.admin_token)
         .unwrap_or(false);
 
-    match db::delete_token(&state.pool, &id).await {
+    match db::delete_token(&state.db.pg, &id).await {
         Ok(true) => {
             let _ = state.audit_tx.try_send(AuditEvent::TokenDeleted {
                 token_id: id,
@@ -675,8 +674,8 @@ async fn tunnel_history(
     let proto = q.protocol.as_deref();
 
     let (entries, total) = tokio::join!(
-        db::list_tunnel_history(&state.pool, q.limit, q.offset, proto),
-        db::count_tunnel_history(&state.pool, proto),
+        db::list_tunnel_history(&state.db.pg, q.limit, q.offset, proto),
+        db::count_tunnel_history(&state.db.pg, proto),
     );
 
     match (entries, total) {
