@@ -323,12 +323,13 @@ impl TestServer {
         let dashboard_addr: SocketAddr = format!("127.0.0.1:{dashboard_port}").parse().unwrap();
         let h = tokio::spawn({
             let core = Arc::clone(&core);
+            let db_dash = db.clone();
             let admin_token = config.auth.admin_token.clone();
             async move {
                 let _ = rustunnel_server::dashboard::run_dashboard(
                     dashboard_addr,
                     core,
-                    db,
+                    db_dash,
                     capture_rx,
                     admin_token,
                     rustunnel_server::audit::noop_audit(),
