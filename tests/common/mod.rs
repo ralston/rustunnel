@@ -209,6 +209,7 @@ impl TestServer {
                 https_port,
                 control_port,
                 dashboard_port,
+                dashboard_origin: "http://localhost:3000".to_string(),
             },
             tls: TlsSection {
                 cert_path: cert_path.clone(),
@@ -333,6 +334,7 @@ impl TestServer {
                     capture_rx,
                     admin_token,
                     rustunnel_server::audit::noop_audit(),
+                    "http://localhost:3000".to_string(),
                 )
                 .await;
             }
