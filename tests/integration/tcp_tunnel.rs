@@ -77,11 +77,10 @@ async fn tcp_tunnel_echoes_data() {
         .await
         .expect("TCP tunnel registration");
 
-    // 4. Connect the data WebSocket bridge.
-    connect_data_bridge(&server, session_id, local_addr);
-
-    // Wait for the TCP edge to start the per-port listener.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // 4. Connect the data WebSocket bridge and wait for it to be ready.
+    connect_data_bridge(&server, session_id, local_addr)
+        .await
+        .expect("data bridge ready");
 
     // 5. Connect to the assigned TCP port on the server.
     let tunnel_addr: SocketAddr = format!("127.0.0.1:{assigned_port}").parse().unwrap();
@@ -111,9 +110,9 @@ async fn tcp_tunnel_echoes_larger_payload() {
     let session_id = client.session_id.unwrap();
     let (_, assigned_port) = client.register_tcp_tunnel().await.expect("register");
 
-    connect_data_bridge(&server, session_id, local_addr);
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    connect_data_bridge(&server, session_id, local_addr)
+        .await
+        .expect("data bridge ready");
 
     let mut conn = tokio::net::TcpStream::connect(
         format!("127.0.0.1:{assigned_port}")
@@ -178,9 +177,9 @@ async fn ping_pong_through_tcp_tunnel() {
     let session_id = client.session_id.unwrap();
     let (_, port) = client.register_tcp_tunnel().await.expect("register");
 
-    connect_data_bridge(&server, session_id, local_addr);
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    connect_data_bridge(&server, session_id, local_addr)
+        .await
+        .expect("data bridge ready");
 
     let mut conn =
         tokio::net::TcpStream::connect(format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap())

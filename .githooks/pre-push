@@ -9,4 +9,12 @@ cargo fmt --all -- --check
 echo "⏳ pre-push: cargo clippy …"
 cargo clippy --workspace --all-targets -- -D warnings
 
+if [ -n "${TEST_DATABASE_URL:-}" ]; then
+    echo "⏳ pre-push: cargo test --workspace (full suite, PostgreSQL at $TEST_DATABASE_URL) …"
+    cargo test --workspace
+else
+    echo "⏳ pre-push: cargo test --workspace (unit tests only — set TEST_DATABASE_URL to run integration tests) …"
+    cargo test --workspace --exclude rustunnel-integration-tests
+fi
+
 echo "✅ pre-push checks passed"

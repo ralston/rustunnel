@@ -1,6 +1,6 @@
 .PHONY: build build-full test fmt lint check install-hooks release release-server release-client \
         release-mcp docker-build docker-run docker-run-monitoring docker-stop docker-logs \
-        deploy deploy-client update-server clean help
+        deploy deploy-client update-server db-start db-stop clean help
 
 # ── configuration ─────────────────────────────────────────────────────────────
 
@@ -20,9 +20,21 @@ build:
 build-full: ui-build
 	cargo build -p rustunnel-server
 
-## test         Run the full test suite (unit + integration).
+## test         Run the full test suite (unit + integration). Requires make db-start first.
 test:
-	cargo test --workspace
+	TEST_DATABASE_URL=postgres://rustunnel:test@localhost:5432/rustunnel_test cargo test --workspace
+
+## db-start     Start the local PostgreSQL container for development and testing.
+db-start:
+	docker compose -f deploy/docker-compose.dev-deps.yml up -d
+	@echo ""
+	@echo "PostgreSQL is up. Add this to your shell profile to persist:"
+	@echo "  export TEST_DATABASE_URL=postgres://rustunnel:test@localhost:5432/rustunnel_test"
+	@echo ""
+
+## db-stop      Stop the local PostgreSQL container.
+db-stop:
+	docker compose -f deploy/docker-compose.dev-deps.yml down
 
 ## fmt          Format all source files in place.
 fmt:

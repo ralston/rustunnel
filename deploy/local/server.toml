@@ -1,9 +1,10 @@
 [server]
-domain       = "localhost"
-http_port    = 8080
-https_port   = 8443
-control_port = 4040
+domain         = "localhost"
+http_port      = 8080
+https_port     = 8443
+control_port   = 4040
 dashboard_port = 4041
+dashboard_origin = "http://localhost:3000"
 
 [tls]
 cert_path = "/tmp/rustunnel-dev/cert.pem"
@@ -14,7 +15,9 @@ admin_token  = "dev-secret-change-me"
 require_auth = false
 
 [database]
-path = "/tmp/rustunnel-dev/rustunnel.db"
+# Local PostgreSQL started with: make db-start
+url           = "postgres://rustunnel:test@localhost:5432/rustunnel_test"
+captured_path = "/tmp/rustunnel-dev/captured.db"
 
 [logging]
 level  = "debug"

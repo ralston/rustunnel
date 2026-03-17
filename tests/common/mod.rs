@@ -109,10 +109,23 @@ pub fn insecure_client_tls() -> Arc<ClientConfig> {
 // ── port selection ────────────────────────────────────────────────────────────
 
 /// Bind port 0 to let the OS assign a free port, then release it.
-/// There is a small TOCTOU window; acceptable for tests.
+/// There is a small TOCTOU window; acceptable for single-use ports (control,
+/// http, https, dashboard) that are bound within the same runtime tick.
 pub fn free_port() -> u16 {
     let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind port 0");
     l.local_addr().unwrap().port()
+}
+
+/// Atomically allocate a block of `count` consecutive TCP port numbers for use
+/// as a tunnel port range.  Using a process-global counter ensures that
+/// parallel tests within the same binary never get overlapping ranges, which
+/// would cause "Address already in use" failures in the TCP edge.
+pub fn alloc_tcp_port_range(count: u16) -> u16 {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    // Start high enough to avoid conflicts with well-known services and the
+    // server's default range (20000–20099).
+    static COUNTER: AtomicU16 = AtomicU16::new(45_000);
+    COUNTER.fetch_add(count, Ordering::SeqCst)
 }
 
 // ── cert generation ───────────────────────────────────────────────────────────
@@ -167,9 +180,9 @@ impl TestServer {
         let http_port = free_port();
         let https_port = free_port();
         let dashboard_port = free_port();
-        let tcp_low = free_port();
-        // Reserve a small range; each test gets its own server so no overlap.
-        let tcp_high = tcp_low.saturating_add(9);
+        // Atomically reserve a 10-port range so parallel tests never overlap.
+        let tcp_low = alloc_tcp_port_range(10);
+        let tcp_high = tcp_low + 9;
         Self::start_on_ports(
             control_port,
             http_port,
@@ -568,8 +581,15 @@ impl TestClient {
 /// yamux connection, accepts those inbound streams, reads the conn_id, and
 /// bidirectionally copies data between the stream and `local_addr`.
 ///
-/// Returns immediately after spawning the background task.
-pub fn connect_data_bridge(server: &TestServer, session_id: Uuid, local_addr: SocketAddr) {
+/// Returns a `oneshot::Receiver<()>` that resolves once the WebSocket
+/// handshake completes (the bridge is ready to handle streams).  Await it
+/// in tests instead of a fixed sleep.
+pub fn connect_data_bridge(
+    server: &TestServer,
+    session_id: Uuid,
+    local_addr: SocketAddr,
+) -> tokio::sync::oneshot::Receiver<()> {
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
     let url = format!(
         "wss://127.0.0.1:{}/_data/{}",
         server.control_port, session_id
@@ -591,6 +611,11 @@ pub fn connect_data_bridge(server: &TestServer, session_id: Uuid, local_addr: So
                 return;
             }
         };
+
+        // Signal readiness immediately after WS handshake, before entering
+        // the yamux accept loop.  The caller awaits this to know the bridge
+        // is live and can route incoming streams.
+        let _ = ready_tx.send(());
 
         // yamux Mode::Server: the server (Mode::Client) opens outbound streams.
         let ws_compat = WsCompat::new(ws);
@@ -628,6 +653,8 @@ pub fn connect_data_bridge(server: &TestServer, session_id: Uuid, local_addr: So
             }
         }
     });
+
+    ready_rx
 }
 
 // ── yamux stream injection (legacy, kept for reference) ──────────────────────

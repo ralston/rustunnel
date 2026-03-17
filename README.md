@@ -172,17 +172,27 @@ make build
 
 ### Run tests
 
-The integration test suite spins up a real server on random ports and exercises auth, HTTP tunnels, TCP tunnels, and reconnection logic.
+The integration test suite spins up a real server on random ports and exercises auth, HTTP tunnels, TCP tunnels, and reconnection logic. It requires a running PostgreSQL instance.
 
 ```bash
-# Full suite (unit + integration)
-cargo test --workspace
+# Start the local PostgreSQL container (once per machine, persists across reboots)
+make db-start
 
-# Or via Makefile
+# Full suite (unit + integration)
 make test
 
 # With output visible
-cargo test --workspace -- --nocapture
+TEST_DATABASE_URL=postgres://rustunnel:test@localhost:5432/rustunnel_test \
+  cargo test --workspace -- --nocapture
+
+# Stop PostgreSQL when you no longer need it
+make db-stop
+```
+
+`make db-start` runs `deploy/docker-compose.dev-deps.yml` which starts a Postgres 16 container on `localhost:5432`. The `make test` target injects `TEST_DATABASE_URL` automatically. If you run `cargo test` directly, export the variable first:
+
+```bash
+export TEST_DATABASE_URL=postgres://rustunnel:test@localhost:5432/rustunnel_test
 ```
 
 ### Run the server locally

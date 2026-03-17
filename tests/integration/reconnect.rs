@@ -87,10 +87,10 @@ async fn tcp_tunnel_works_after_server_restart() {
         .await
         .expect("v1 tunnel registration");
 
-    // Connect the data WebSocket bridge so yamux streams can be proxied.
-    connect_data_bridge(&server_v1, session_id_v1, local_addr);
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Connect the data WebSocket bridge and wait for it to be ready.
+    connect_data_bridge(&server_v1, session_id_v1, local_addr)
+        .await
+        .expect("v1 data bridge ready");
 
     // Verify the tunnel works on server v1.
     let tunnel_addr: SocketAddr = format!("127.0.0.1:{assigned_port}").parse().unwrap();
@@ -132,9 +132,9 @@ async fn tcp_tunnel_works_after_server_restart() {
         .await
         .expect("v2 tunnel registration");
 
-    connect_data_bridge(&server_v2, session_id_v2, local_addr);
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    connect_data_bridge(&server_v2, session_id_v2, local_addr)
+        .await
+        .expect("v2 data bridge ready");
 
     // Verify the tunnel works on server v2.
     let tunnel_addr2: SocketAddr = format!("127.0.0.1:{assigned_port2}").parse().unwrap();

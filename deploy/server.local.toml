@@ -28,10 +28,8 @@ admin_token  = "dev-secret-change-me"
 require_auth = false
 
 [database]
-# PostgreSQL connection URL (shared tokens + tunnel history).
-# For local dev you can run a local Postgres or point at the DB VPS over the private network.
-url = "postgresql://rustunnel:CHANGE_ME@10.0.0.3:5432/rustunnel"
-# Per-region SQLite for captured HTTP request data (persisted in a named Docker volume).
+# Local PostgreSQL started with: make db-start (deploy/docker-compose.dev-deps.yml)
+url           = "postgres://rustunnel:test@postgres:5432/rustunnel_test"
 captured_path = "/var/lib/rustunnel/captured.db"
 
 [logging]

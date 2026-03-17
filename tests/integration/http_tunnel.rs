@@ -73,13 +73,13 @@ async fn http_tunnel_proxies_hello_world() {
         .await
         .expect("tunnel registration");
 
-    // 4. Connect the data WebSocket bridge.  The server opens one yamux stream
-    //    per incoming HTTP request (Mode::Client); this bridge accepts those
-    //    streams (Mode::Server) and forwards data to the local hello-world server.
-    connect_data_bridge(&server, session_id, local_addr);
-
-    // 5. Small delay to let the data WebSocket connect and yamux handshake complete.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // 4. Connect the data WebSocket bridge and wait for it to be ready.  The
+    //    server opens one yamux stream per incoming HTTP request (Mode::Client);
+    //    this bridge accepts those streams (Mode::Server) and forwards data to
+    //    the local hello-world server.
+    connect_data_bridge(&server, session_id, local_addr)
+        .await
+        .expect("data bridge ready");
 
     // 6. Make an HTTPS request to the tunnel.
     //    The Host header carries the subdomain that the edge uses for routing.
@@ -193,9 +193,9 @@ async fn multiple_requests_through_tunnel() {
         .await
         .expect("register");
 
-    connect_data_bridge(&server, session_id, local_addr);
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    connect_data_bridge(&server, session_id, local_addr)
+        .await
+        .expect("data bridge ready");
 
     let http_client = insecure_http_client();
     let url = format!("https://127.0.0.1:{}/", server.https_port);
