@@ -12,6 +12,7 @@ You can self-host or use our managed service.
 
 ## Table of Contents
 
+- [Hosted service](#hosted-service)
 - [Architecture overview](#architecture-overview)
 - [Requirements](#requirements)
 - [Local development setup](#local-development-setup)
@@ -47,6 +48,59 @@ You can self-host or use our managed service.
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
+
+---
+
+## Hosted service
+
+You can use rustunnel without running your own server. We operate a public edge server at **`edge.rustunnel.com`** that you can connect to immediately.
+
+### Available servers
+
+| Server | Region | Control plane | Status |
+|--------|--------|---------------|--------|
+| `edge.rustunnel.com` | Europe (Helsinki) | `:4040` | Live |
+
+More regions are coming — follow the project for updates.
+
+### Getting an auth token
+
+Access to the hosted service requires an auth token. To request one:
+
+1. Open a [GitHub Issue](https://github.com/joaoh82/rustunnel/issues/new) titled **"Token request"**
+2. Include your **email address** or **Discord username** in the body
+3. We will send you a token privately
+
+Tokens are issued manually for now while the service is in early access.
+
+### Quick start with the hosted server
+
+Once you have a token, run the setup wizard:
+
+```bash
+rustunnel setup
+# Server address [edge.rustunnel.com:4040]: (press Enter)
+# Auth token: <paste your token>
+```
+
+Then expose a local service:
+
+```bash
+# HTTP tunnel — get a public HTTPS URL for your local port 3000
+rustunnel http 3000
+
+# Custom subdomain
+rustunnel http 3000 --subdomain myapp
+
+# TCP tunnel — e.g. expose a local database
+rustunnel tcp 5432
+```
+
+The client prints the public URL as soon as the tunnel is established:
+
+```
+✓ tunnel open  https://abc123.edge.rustunnel.com
+```
 
 ---
 
@@ -779,7 +833,7 @@ rustunnel ships a `rustunnel-mcp` binary that implements the
 letting AI agents (Claude, GPT-4o, custom agents) open and manage tunnels
 without any manual intervention.
 
-### Quick setup (Claude Desktop)
+### Quick setup (Claude Desktop — hosted server)
 
 ```json
 {
@@ -787,8 +841,8 @@ without any manual intervention.
     "rustunnel": {
       "command": "rustunnel-mcp",
       "args": [
-        "--server", "tunnel.example.com:4040",
-        "--api",    "https://tunnel.example.com:8443"
+        "--server", "edge.rustunnel.com:4040",
+        "--api",    "https://edge.rustunnel.com:8443"
       ]
     }
   }

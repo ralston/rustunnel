@@ -64,9 +64,12 @@ cargo build --release -p rustunnel-mcp
 
 ## Connecting an AI agent
 
-### Claude Desktop (local)
+### Using the hosted server (edge.rustunnel.com)
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+The fastest way to get started. You need an auth token — see
+[Getting an auth token](https://github.com/joaoh82/rustunnel#getting-an-auth-token) in the README.
+
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -74,15 +77,62 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "rustunnel": {
       "command": "rustunnel-mcp",
       "args": [
-        "--server", "tunnel.example.com:4040",
-        "--api",    "https://tunnel.example.com:8443"
+        "--server", "edge.rustunnel.com:4040",
+        "--api",    "https://edge.rustunnel.com:8443"
+      ],
+      "env": {
+        "RUSTUNNEL_TOKEN": "<your-token>"
+      }
+    }
+  }
+}
+```
+
+**Claude Code** — add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rustunnel": {
+      "command": "rustunnel-mcp",
+      "args": [
+        "--server", "edge.rustunnel.com:4040",
+        "--api",    "https://edge.rustunnel.com:8443"
       ]
     }
   }
 }
 ```
 
-For local development with a self-signed cert:
+Once connected, you can ask the agent:
+
+> "Expose my local server on port 3000 using my rustunnel token `<token>`."
+> "Open an HTTP tunnel to port 8080 with subdomain `myapp`."
+> "List all my active tunnels."
+
+The agent will call `create_tunnel` and return a public URL like `https://abc123.edge.rustunnel.com`.
+
+---
+
+### Self-hosted server
+
+Replace the server address with your own instance:
+
+```json
+{
+  "mcpServers": {
+    "rustunnel": {
+      "command": "rustunnel-mcp",
+      "args": [
+        "--server", "your-server.com:4040",
+        "--api",    "https://your-server.com:8443"
+      ]
+    }
+  }
+}
+```
+
+### Local development (self-signed cert)
 
 ```json
 {
@@ -145,7 +195,7 @@ Open a tunnel to a locally running service and get a public URL.
 **Returns:**
 ```json
 {
-  "public_url": "https://abc123.tunnel.example.com",
+  "public_url": "https://abc123.edge.rustunnel.com",
   "tunnel_id":  "a1b2c3d4-...",
   "protocol":   "http"
 }
@@ -198,8 +248,8 @@ you want to run the CLI yourself.
 **Returns:**
 ```json
 {
-  "cli_command":  "rustunnel http 3000 --server tunnel.example.com:4040 --token abc123",
-  "server":       "tunnel.example.com:4040",
+  "cli_command":  "rustunnel http 3000 --server edge.rustunnel.com:4040 --token abc123",
+  "server":       "edge.rustunnel.com:4040",
   "install_url":  "https://github.com/joaoh82/rustunnel/releases/latest"
 }
 ```
@@ -228,7 +278,7 @@ Retrieve the history of past tunnels.
 
 2. Agent calls create_tunnel(token="...", local_port=3000, protocol="http")
    → MCP server spawns: rustunnel http 3000 --server ... --token ...
-   → Returns: { public_url: "https://xyz.tunnel.example.com", tunnel_id: "..." }
+   → Returns: { public_url: "https://xyz.edge.rustunnel.com", tunnel_id: "..." }
 
 3. Agent returns the public URL to the user.
 
@@ -252,15 +302,21 @@ Retrieve the history of past tunnels.
 
 ## Token management
 
-Tokens are managed separately from the MCP server. Create one using the
-dashboard UI, the CLI, or the REST API:
+### Hosted service
+
+Request a token by opening a [GitHub Issue](https://github.com/joaoh82/rustunnel/issues/new)
+titled **"Token request"** with your email address or Discord username. We will send it to you privately.
+
+### Self-hosted server
+
+Create tokens via the dashboard UI, the CLI, or the REST API:
 
 ```bash
 # CLI
 rustunnel token create --name agent-session
 
 # REST API
-curl -X POST http://localhost:4041/api/tokens \
+curl -X POST https://edge.rustunnel.com:8443/api/tokens \
   -H "Authorization: Bearer <admin-token>" \
   -H "Content-Type: application/json" \
   -d '{"label": "agent-session"}'
