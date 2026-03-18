@@ -107,6 +107,8 @@ The client prints the public URL as soon as the tunnel is established:
 
 ## Architecture overview
 
+![rustunnel architecture](images/rustunnel_architecture.png)
+
 ```
                         ┌──────────────────────────────────────────┐
                         │           rustunnel-server               │
