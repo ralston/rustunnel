@@ -472,7 +472,7 @@ certbot certonly \
   -d "edge.rustunnel.com" \
   -d "*.edge.rustunnel.com" \
   --agree-tos \
-  --email joaoh82@gmail.com
+  --email your@email.com
 ```
 
 Certbot writes the certificate to:
