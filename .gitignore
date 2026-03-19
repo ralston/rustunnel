@@ -46,3 +46,4 @@ dashboard-ui/dist/
 
 # Claude Code project memory (local only)
 .claude/
+CLAUDE.md
