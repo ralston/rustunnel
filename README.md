@@ -811,6 +811,12 @@ make docker-run-monitoring
 # Prometheus: http://localhost:9090
 ```
 
+> **Production note:** The default Grafana password is `changeme`. Set the `GRAFANA_PASSWORD` environment variable before starting the stack in production:
+> ```bash
+> export GRAFANA_PASSWORD=your-strong-password
+> make docker-run-monitoring
+> ```
+
 ---
 
 ## REST API
