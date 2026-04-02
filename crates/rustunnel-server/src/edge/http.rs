@@ -17,8 +17,10 @@
 //!
 //! WebSocket upgrade
 //! ──────────────────
-//! Detected via `Upgrade: websocket`; after the 101 response the upgraded
-//! connection is bridged to the yamux stream via copy_bidirectional.
+//! Detected via `Upgrade: websocket`; the full HTTP upgrade request is forwarded
+//! to the backend through the yamux stream (preserving Connection + Upgrade
+//! headers). The backend completes its own 101 handshake, and hyper bridges the
+//! upgraded connections on both sides automatically via `.with_upgrades()`.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -342,7 +344,7 @@ async fn proxy_request(
         }
     };
 
-    // ── 6. WebSocket upgrade fast-path ────────────────────────────────────
+    // ── 6. WebSocket upgrade ──────────────────────────────────────────────
     if is_ws {
         return handle_ws_upgrade(req, yamux_stream, conn_id, &ctx, start).await;
     }
@@ -436,6 +438,11 @@ async fn forward_http(
 
 // ── WebSocket upgrade ─────────────────────────────────────────────────────────
 
+/// Forward the WebSocket upgrade to the backend and bridge the two upgraded
+/// connections. Unlike the old implementation that completed the 101 on the
+/// edge and raw-copied bytes (skipping the backend handshake), this sends the
+/// full HTTP upgrade request through a hyper client so the backend completes
+/// its own 101 handshake.
 async fn handle_ws_upgrade(
     mut req: Request<Incoming>,
     yamux_stream: YamuxStream,
@@ -445,21 +452,78 @@ async fn handle_ws_upgrade(
 ) -> Response<BoxBody> {
     debug!(%conn_id, "WebSocket upgrade");
 
-    let upgrade_fut = hyper::upgrade::on(&mut req);
+    // 1. Capture the server-side upgrade future (browser ↔ edge).
+    //    Must be called before we move parts out of `req`.
+    let server_upgrade = hyper::upgrade::on(&mut req);
+
+    // 2. Open a hyper HTTP/1.1 client over the yamux stream to the backend.
+    let io = TokioIo::new(yamux_stream.compat());
+    let (mut sender, conn) = match hyper::client::conn::http1::Builder::new()
+        .handshake(io)
+        .await
+    {
+        Ok(pair) => pair,
+        Err(e) => {
+            warn!(%conn_id, "WS upstream handshake failed: {e}");
+            return err_response(StatusCode::BAD_GATEWAY, "Upstream handshake failed");
+        }
+    };
 
     tokio::spawn(async move {
-        match upgrade_fut.await {
-            Err(e) => warn!(%conn_id, "upgrade failed: {e}"),
-            Ok(upgraded) => {
-                // hyper::upgrade::Upgraded → tokio::io via TokioIo.
-                let mut client_io = TokioIo::new(upgraded);
-                // yamux::Stream (futures::io) → tokio::io via compat().
-                let mut upstream = yamux_stream.compat();
-                match tokio::io::copy_bidirectional(&mut client_io, &mut upstream).await {
+        if let Err(e) = conn.with_upgrades().await {
+            debug!(%conn_id, "WS upstream conn: {e}");
+        }
+    });
+
+    // 3. Forward the upgrade request, preserving Connection + Upgrade headers.
+    let (mut parts, body) = req.into_parts();
+    remove_hop_by_hop_except_upgrade(&mut parts.headers);
+    let fwd_req = Request::from_parts(parts, body);
+
+    let mut upstream_resp = match sender.send_request(fwd_req).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(%conn_id, "WS upstream request failed: {e}");
+            return err_response(StatusCode::BAD_GATEWAY, "Upstream request failed");
+        }
+    };
+
+    // If the backend didn't upgrade, return its response as-is.
+    if upstream_resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        warn!(%conn_id, status = %upstream_resp.status(), "backend did not upgrade");
+        let (parts, body) = upstream_resp.into_parts();
+        let body_bytes = match body.collect().await {
+            Ok(b) => b.to_bytes(),
+            Err(_) => Bytes::new(),
+        };
+        return Response::from_parts(parts, full(body_bytes));
+    }
+
+    // 4. Capture the client-side upgrade future (edge ↔ backend).
+    let client_upgrade = hyper::upgrade::on(&mut upstream_resp);
+
+    // 5. Build the 101 response to send back to the browser, copying the
+    //    backend's response headers (Sec-WebSocket-Accept, etc.).
+    let mut resp_builder = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
+    for (key, value) in upstream_resp.headers() {
+        resp_builder = resp_builder.header(key, value);
+    }
+
+    // 6. Spawn a task that waits for both upgrades to complete, then bridges
+    //    the two raw byte streams.
+    tokio::spawn(async move {
+        let (server_io, client_io) = tokio::join!(server_upgrade, client_upgrade);
+        match (server_io, client_io) {
+            (Ok(server), Ok(client)) => {
+                let mut server = TokioIo::new(server);
+                let mut client = TokioIo::new(client);
+                match tokio::io::copy_bidirectional(&mut server, &mut client).await {
                     Ok((up, dn)) => debug!(%conn_id, bytes_up=up, bytes_dn=dn, "WS done"),
                     Err(e) => debug!(%conn_id, "WS copy: {e}"),
                 }
             }
+            (Err(e), _) => warn!(%conn_id, "server upgrade failed: {e}"),
+            (_, Err(e)) => warn!(%conn_id, "client upgrade failed: {e}"),
         }
     });
 
@@ -479,12 +543,7 @@ async fn handle_ws_upgrade(
         },
     );
 
-    Response::builder()
-        .status(StatusCode::SWITCHING_PROTOCOLS)
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .body(empty())
-        .unwrap()
+    resp_builder.body(empty()).unwrap()
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -519,6 +578,17 @@ static HOP_BY_HOP: &[&str] = &[
 
 fn remove_hop_by_hop(headers: &mut hyper::HeaderMap) {
     for &name in HOP_BY_HOP {
+        headers.remove(name);
+    }
+}
+
+/// Like `remove_hop_by_hop` but keeps `Connection` and `Upgrade` headers
+/// intact so that WebSocket upgrade requests pass through to the backend.
+fn remove_hop_by_hop_except_upgrade(headers: &mut hyper::HeaderMap) {
+    for &name in HOP_BY_HOP {
+        if name == "connection" || name == "upgrade" {
+            continue;
+        }
         headers.remove(name);
     }
 }
